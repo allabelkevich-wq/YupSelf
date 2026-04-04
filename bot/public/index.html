@@ -723,70 +723,79 @@
     const vb = $("#voiceBtn");
     let mediaRec = null;
     let recording = false;
+    let recStream = null;
 
     vb.addEventListener("click", async () => {
-        if (recording && mediaRec) {
-            mediaRec.stop();
+        if (recording) {
+            // Stop recording
+            if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
             return;
         }
-        // Reset state for new recording
-        mediaRec = null;
-        recording = false;
+
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-            // Pick supported MIME type with explicit codecs
-            const types = [
-                "audio/webm;codecs=opus",
-                "audio/webm",
-                "audio/mp4;codecs=aac",
-                "audio/mp4",
-                "audio/ogg;codecs=opus",
-            ];
-            const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || "";
-            console.log("[voice] using MIME:", mimeType || "default");
-            mediaRec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-            const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("webm") ? "webm" : "ogg";
-            const chunks = [];
-
-            mediaRec.ondataavailable = e => chunks.push(e.data);
-            mediaRec.onstop = async () => {
-                recording = false;
-                vb.classList.remove("recording");
-                stream.getTracks().forEach(t => t.stop());
-
-                const blob = new Blob(chunks, { type: mimeType || "audio/ogg" });
-                const form = new FormData();
-                form.append("audio", blob, `voice.${ext}`);
-
-                $("#prompt").value = "Распознаю голос...";
-                try {
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 15000);
-                    const res = await fetch(`${API}/api/transcribe`, {
-                        method: "POST", body: form, signal: controller.signal
-                    });
-                    clearTimeout(timeout);
-                    if (!res.ok) throw new Error("Status " + res.status);
-                    const data = await res.json();
-                    $("#prompt").value = data.text || "";
-                    if (!data.text) alert("Не удалось распознать. Попробуй говорить громче.");
-                } catch (e) {
-                    $("#prompt").value = "";
-                    alert(e.name === "AbortError" ? "Таймаут. Попробуй ещё раз." : "Ошибка распознавания: " + e.message);
-                }
-            };
-
-            mediaRec.start();
-            recording = true;
-            vb.classList.add("recording");
+            recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         } catch (err) {
-            if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-                alert("Микрофон заблокирован.\n\nMac: Системные настройки → Конфиденциальность → Микрофон → включи для браузера.\n\niPhone/Android: Настройки → Safari/Chrome → Микрофон → Разрешить.");
-            } else {
-                alert("Микрофон недоступен: " + (err.message || "неизвестная ошибка"));
-            }
+            alert("Микрофон заблокирован.\n\nMac: Системные настройки → Конфиденциальность → Микрофон\niPhone: Настройки → Safari → Микрофон");
+            return;
         }
+
+        // Pick codec
+        const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+        const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+        const ext = mime.includes("mp4") ? "m4a" : mime.includes("webm") ? "webm" : "ogg";
+
+        try {
+            mediaRec = mime ? new MediaRecorder(recStream, { mimeType: mime }) : new MediaRecorder(recStream);
+        } catch {
+            mediaRec = new MediaRecorder(recStream);
+        }
+
+        const chunks = [];
+        mediaRec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+        mediaRec.onstop = async () => {
+            recording = false;
+            vb.classList.remove("recording");
+            recStream.getTracks().forEach(t => t.stop());
+            recStream = null;
+            mediaRec = null;
+
+            if (!chunks.length) { alert("Запись пуста. Попробуй ещё раз."); return; }
+
+            const blob = new Blob(chunks);
+            if (blob.size < 1000) { alert("Слишком короткая запись. Говори не менее 1 секунды."); return; }
+
+            const form = new FormData();
+            form.append("audio", blob, `voice.${ext}`);
+
+            $("#prompt").value = "Распознаю голос...";
+            try {
+                const res = await fetch(`${API}/api/transcribe`, { method: "POST", body: form });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || "Status " + res.status);
+                }
+                const data = await res.json();
+                $("#prompt").value = data.text || "";
+                if (!data.text) $("#prompt").value = "";
+            } catch (e) {
+                $("#prompt").value = "";
+                console.error("[voice]", e);
+                alert("Ошибка распознавания: " + e.message);
+            }
+        };
+
+        // Start with timeslice to ensure data is captured every 500ms
+        mediaRec.start(500);
+        recording = true;
+        vb.classList.add("recording");
+
+        // Auto-stop after 2 minutes
+        setTimeout(() => {
+            if (recording && mediaRec && mediaRec.state === "recording") {
+                mediaRec.stop();
+            }
+        }, 120000);
     });
 })();
 </script>
