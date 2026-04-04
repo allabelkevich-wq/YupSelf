@@ -1,25 +1,76 @@
 import "dotenv/config";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const LAOZHANG_API_KEY = process.env.LAOZHANG_API_KEY;
 
-// NanoBanana 2 (Gemini 3.1 Flash Image) — fast, high quality
-const IMAGE_MODEL = "google/gemini-2.5-flash-preview-image";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const LAOZHANG_URL = "https://api.laozhang.ai/v1/chat/completions";
+
+// Image models (with fallback chain)
+const IMAGE_MODEL_PRIMARY = "google/gemini-3-pro-image-preview";
+const IMAGE_MODEL_FALLBACK = "gemini-3-pro-image-preview-c";
 // Text model for prompt enhancement
 const TEXT_MODEL = "google/gemini-2.5-flash-preview";
 
+// ── NEGATIVE PROMPT — what to NEVER generate ────────────────────────
+const NEGATIVE_PROMPT = `
+NEGATIVE PROMPT (absolutely avoid in the generated image):
+- No stock photo aesthetic, no generic corporate look
+- No cheesy motivational poster style (sunset + silhouette cliche)
+- No clip art, no cartoon elements unless explicitly requested
+- No oversaturated neon colors, no rainbow gradients
+- No AI-obvious artifacts (distorted hands, melted faces, wrong text, extra fingers)
+- No generic Pinterest "inspirational quote" aesthetic
+- No busy cluttered backgrounds
+- No watermarks, borders, frames, logos
+- No emojis as visual elements
+- No generic "beautiful landscape" without unique perspective
+- No cliche stock lighting (flat corporate flash)
+- No plastic-looking skin or uncanny valley faces
+- No text on image unless explicitly requested
+`.trim();
+
+// ── QUALITY SYSTEM PROMPT — expert prompt engineer ──────────────────
+const SYSTEM_PROMPT = `You are an elite visual prompt architect — not a generic AI assistant.
+Your mission: transform ANY user description into a cinematic, editorial-grade image prompt.
+
+## YOUR APPROACH:
+1. TRANSLATE to English if the input is in another language
+2. IDENTIFY the core visual concept — what makes this image unique, not generic
+3. CRAFT a detailed prompt (3-6 sentences) with these mandatory layers:
+   - SUBJECT: precise, specific, with personality or story
+   - COMPOSITION: camera angle, framing, depth of field, focal point
+   - LIGHTING: volumetric, directional, color temperature, shadows
+   - ATMOSPHERE: mood, texture, environment details
+   - TECHNIQUE: photographic or artistic technique reference (not artist names)
+4. APPLY the requested style (if any), deeply integrated — not just appended
+5. INJECT the negative prompt at the end
+
+## QUALITY RULES:
+- Every prompt must feel like a brief to a $10,000/day photographer or concept artist
+- Specificity > generality: "warm amber side-light at golden hour" NOT "nice lighting"
+- Unique perspective > cliche: "low angle through rain-covered glass" NOT "beautiful view"
+- Emotional resonance: every image should evoke a feeling, not just depict a scene
+- Reference 2026 visual trends: editorial minimalism, volumetric atmospherics, raw textures
+- If the user's idea is vague, make a bold creative choice — don't play it safe
+
+## ABSOLUTE PROHIBITIONS:
+- Never produce a prompt that could result in a stock photo
+- Never use generic phrases: "beautiful", "stunning", "amazing", "breathtaking"
+- Never reference specific artists by name (copyright issues)
+- Never add text/typography to images unless user explicitly asks
+
+## OUTPUT FORMAT:
+Return ONLY the final prompt text. No quotes, no explanations, no preamble.
+End with the negative prompt section.`;
+
 /**
- * Enhance a user's image prompt — translate to English, add style details.
- * Returns the improved prompt string.
+ * Enhance a user's image prompt — full creative rewrite with anti-cliche system.
  */
 export async function enhancePrompt(userText, style = "") {
-  const systemPrompt = `You are an expert AI image prompt engineer.
-The user gives you a description in any language. Your job:
-1. Translate it to English if needed
-2. Expand it into a detailed, vivid image generation prompt (2-4 sentences)
-3. Add artistic details: lighting, composition, mood, texture
-${style ? `4. Apply this style: ${style}` : ""}
-Return ONLY the final prompt, nothing else. No quotes, no explanations.`;
+  const userMessage = style
+    ? `Description: ${userText}\n\nApply this style deeply: ${style}`
+    : userText;
 
   const res = await fetch(OPENROUTER_URL, {
     method: "POST",
@@ -30,11 +81,11 @@ Return ONLY the final prompt, nothing else. No quotes, no explanations.`;
     body: JSON.stringify({
       model: TEXT_MODEL,
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userText },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userMessage },
       ],
-      max_tokens: 300,
-      temperature: 0.7,
+      max_tokens: 600,
+      temperature: 0.85,
     }),
   });
 
@@ -44,71 +95,132 @@ Return ONLY the final prompt, nothing else. No quotes, no explanations.`;
   }
 
   const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() || userText;
+  let enhanced = data.choices?.[0]?.message?.content?.trim() || userText;
+
+  // Ensure negative prompt is included
+  if (!enhanced.toLowerCase().includes("negative prompt")) {
+    enhanced += "\n\n" + NEGATIVE_PROMPT;
+  }
+
+  return enhanced;
 }
 
 /**
- * Generate an image from a prompt using NanoBanana.
- * Returns { imageBase64, revisedPrompt } or throws on error.
+ * Generate image with fallback chain: OpenRouter → laozhang.ai
  */
 export async function generateImage(prompt) {
-  const res = await fetch(OPENROUTER_URL, {
+  // Attempt 1: OpenRouter (Gemini 3 Pro Image)
+  try {
+    const result = await _callImageApi(
+      OPENROUTER_URL,
+      OPENROUTER_API_KEY,
+      IMAGE_MODEL_PRIMARY,
+      prompt
+    );
+    if (result) return result;
+  } catch (err) {
+    console.warn("[image] OpenRouter failed:", err.message);
+  }
+
+  // Attempt 2: laozhang.ai fallback
+  if (LAOZHANG_API_KEY) {
+    try {
+      const result = await _callImageApi(
+        LAOZHANG_URL,
+        LAOZHANG_API_KEY,
+        IMAGE_MODEL_FALLBACK,
+        prompt
+      );
+      if (result) return result;
+    } catch (err) {
+      console.warn("[image] laozhang fallback failed:", err.message);
+    }
+  }
+
+  throw new Error("All image generation APIs failed");
+}
+
+/**
+ * Internal: call an OpenAI-compatible image API and extract result.
+ */
+async function _callImageApi(apiUrl, apiKey, model, prompt) {
+  const res = await fetch(apiUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: IMAGE_MODEL,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      // Request image output
-      response_format: { type: "image" },
+      model,
+      messages: [{ role: "user", content: prompt }],
     }),
   });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`OpenRouter image error ${res.status}: ${err}`);
+    throw new Error(`API error ${res.status}: ${err}`);
   }
 
   const data = await res.json();
-  const message = data.choices?.[0]?.message;
+  return _extractImage(data);
+}
 
-  // NanoBanana returns image as base64 in content
-  if (message?.content) {
-    // Check if content is an array (multimodal response)
-    if (Array.isArray(message.content)) {
-      const imagePart = message.content.find(
-        (p) => p.type === "image_url" || p.type === "image"
-      );
-      if (imagePart) {
-        const b64 = imagePart.image_url?.url || imagePart.url || imagePart.data;
+/**
+ * Extract image from various API response formats.
+ */
+function _extractImage(data) {
+  const message = data.choices?.[0]?.message;
+  if (!message?.content) return null;
+
+  // Format 1: Array with image parts (OpenRouter style)
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (part.type === "image_url" || part.type === "image") {
+        const b64 =
+          part.image_url?.url || part.url || part.data || part.b64_json;
         if (b64) {
-          const base64Data = b64.replace(/^data:image\/\w+;base64,/, "");
-          return { imageBase64: base64Data };
+          return {
+            imageBase64: b64.replace(/^data:image\/\w+;base64,/, ""),
+          };
         }
       }
     }
-    // String content — might be base64 or a URL
-    if (typeof message.content === "string") {
-      if (message.content.startsWith("data:image")) {
-        const base64Data = message.content.replace(
-          /^data:image\/\w+;base64,/,
-          ""
-        );
-        return { imageBase64: base64Data };
-      }
-      // Could be a URL
-      if (message.content.startsWith("http")) {
-        return { imageUrl: message.content.trim() };
+    // Try inline_data format
+    for (const part of message.content) {
+      if (part.inline_data?.data) {
+        return { imageBase64: part.inline_data.data };
       }
     }
   }
 
-  throw new Error("No image in OpenRouter response");
+  // Format 2: String content
+  if (typeof message.content === "string") {
+    const content = message.content.trim();
+
+    // base64 data URI
+    if (content.startsWith("data:image")) {
+      return {
+        imageBase64: content.replace(/^data:image\/\w+;base64,/, ""),
+      };
+    }
+
+    // Direct URL
+    if (content.startsWith("http")) {
+      return { imageUrl: content };
+    }
+
+    // Raw base64 (no prefix, long string)
+    if (content.length > 1000 && /^[A-Za-z0-9+/=]+$/.test(content.slice(0, 100))) {
+      return { imageBase64: content };
+    }
+  }
+
+  // Format 3: images array (some providers)
+  if (data.images?.length) {
+    const img = data.images[0];
+    if (img.url) return { imageUrl: img.url };
+    if (img.b64_json) return { imageBase64: img.b64_json };
+  }
+
+  return null;
 }
