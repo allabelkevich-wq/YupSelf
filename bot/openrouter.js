@@ -107,15 +107,23 @@ export async function enhancePrompt(userText, style = "") {
 
 /**
  * Generate image with fallback chain: OpenRouter → laozhang.ai
+ * @param {string} prompt
+ * @param {{ aspectRatio?: string, imageSize?: string }} imageConfig
  */
-export async function generateImage(prompt) {
+export async function generateImage(prompt, imageConfig = {}) {
+  const config = {
+    aspect_ratio: imageConfig.aspectRatio || "1:1",
+    image_size: imageConfig.imageSize || "1K",
+  };
+
   // Attempt 1: OpenRouter (Gemini 3 Pro Image)
   try {
     const result = await _callImageApi(
       OPENROUTER_URL,
       OPENROUTER_API_KEY,
       IMAGE_MODEL_PRIMARY,
-      prompt
+      prompt,
+      config
     );
     if (result) return result;
   } catch (err) {
@@ -129,7 +137,8 @@ export async function generateImage(prompt) {
         LAOZHANG_URL,
         LAOZHANG_API_KEY,
         IMAGE_MODEL_FALLBACK,
-        prompt
+        prompt,
+        config
       );
       if (result) return result;
     } catch (err) {
@@ -143,17 +152,26 @@ export async function generateImage(prompt) {
 /**
  * Internal: call an OpenAI-compatible image API and extract result.
  */
-async function _callImageApi(apiUrl, apiKey, model, prompt) {
+async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
+  const body = {
+    model,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  // Add image_config for aspect ratio and size
+  if (imageConfig.aspect_ratio || imageConfig.image_size) {
+    body.image_config = {};
+    if (imageConfig.aspect_ratio) body.image_config.aspect_ratio = imageConfig.aspect_ratio;
+    if (imageConfig.image_size) body.image_config.image_size = imageConfig.image_size;
+  }
+
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: prompt }],
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
