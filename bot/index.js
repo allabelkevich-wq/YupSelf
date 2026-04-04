@@ -3,6 +3,7 @@ import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
 import { enhancePrompt, generateImage, editImage } from "./openrouter.js";
 import { transcribeAudio } from "./groq.js";
+import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -586,6 +587,55 @@ app.get("/api/download/:id", (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Content-Disposition", `attachment; filename="yupself-${req.params.id}.png"`);
   res.send(buf);
+});
+
+// ── Web API: user profile / cabinet ──────────────────────────────────
+app.post("/api/auth", async (req, res) => {
+  try {
+    const { telegramId, username, firstName, avatarUrl, referralCode } = req.body;
+    if (!telegramId) return res.status(400).json({ error: "telegramId required" });
+    const user = await getOrCreateUser(telegramId, { username, firstName, avatarUrl, referralCode });
+    res.json(user);
+  } catch (err) {
+    console.error("[api/auth]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/profile/:telegramId", async (req, res) => {
+  try {
+    const tid = Number(req.params.telegramId);
+    const [balance, stats, history] = await Promise.all([
+      getBalance(tid),
+      getUserStats(tid),
+      getGenerations(tid, 20),
+    ]);
+    res.json({ ...balance, stats, history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/history/:telegramId", async (req, res) => {
+  try {
+    const tid = Number(req.params.telegramId);
+    const limit = Number(req.query.limit) || 20;
+    const offset = Number(req.query.offset) || 0;
+    const gens = await getGenerations(tid, limit, offset);
+    res.json(gens);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/favorite/:id", async (req, res) => {
+  try {
+    const { telegramId } = req.body;
+    const result = await toggleFavorite(Number(req.params.id), telegramId);
+    res.json({ isFavorite: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Web API: edit image with reference ───────────────────────────────
