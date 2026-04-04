@@ -562,8 +562,8 @@ app.post("/api/generate", async (req, res) => {
       imageUrl: result.imageUrl || null,
     });
   } catch (err) {
-    console.error("[api/generate]", err.message);
-    res.status(500).json({ error: "Generation failed" });
+    console.error("[api/generate]", err.message, err.stack?.slice(0, 200));
+    res.status(500).json({ error: "Generation failed: " + err.message });
   }
 });
 
