@@ -26,11 +26,10 @@ NEGATIVE PROMPT (absolutely avoid in the generated image):
 - No generic Pinterest "inspirational quote" aesthetic
 - No busy cluttered backgrounds
 - No watermarks, borders, frames, logos
-- No emojis as visual elements
 - No generic "beautiful landscape" without unique perspective
 - No cliche stock lighting (flat corporate flash)
 - No plastic-looking skin or uncanny valley faces
-- No text on image unless explicitly requested
+- No text on image UNLESS user explicitly requested text/title/caption
 `.trim();
 
 // ── QUALITY SYSTEM PROMPT — expert prompt engineer ──────────────────
@@ -61,7 +60,8 @@ Your mission: transform ANY user description into a cinematic, editorial-grade i
 - Never produce a prompt that could result in a stock photo
 - Never use generic phrases: "beautiful", "stunning", "amazing", "breathtaking"
 - Never reference specific artists by name (copyright issues)
-- Never add text/typography to images unless user explicitly asks
+- If user asks for text/typography/title on the image — ALWAYS preserve that request in the prompt. Specify exact text in quotes.
+- If user sends a long article/text — extract the KEY IDEA and create a visual metaphor for it, not a literal illustration
 
 ## OUTPUT FORMAT:
 Return ONLY the final prompt text. No quotes, no explanations, no preamble.
