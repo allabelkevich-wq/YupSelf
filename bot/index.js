@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
-import { enhancePrompt, generateImage } from "./openrouter.js";
+import { enhancePrompt, generateImage, editImage } from "./openrouter.js";
 import { transcribeAudio } from "./groq.js";
 
 // ── Config ──────────────────────────────────────────────────────────
@@ -41,6 +41,7 @@ bot.use(
       style: null,
       aspectRatio: "1:1",
       imageSize: "1K",
+      refImages: [], // base64 reference images for editing
     }),
   })
 );
@@ -214,6 +215,97 @@ bot.command("imagine", async (ctx) => {
   await doGenerate(ctx, text);
 });
 
+// ── Photo messages — save as reference ───────────────────────────────
+bot.on("message:photo", async (ctx) => {
+  const caption = ctx.message.caption || "";
+  const photos = ctx.message.photo;
+  const largest = photos[photos.length - 1]; // highest resolution
+
+  try {
+    const file = await ctx.api.getFile(largest.file_id);
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    const res = await fetch(fileUrl);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const b64 = buf.toString("base64");
+
+    ctx.session.refImages.push(b64);
+    const count = ctx.session.refImages.length;
+
+    if (caption) {
+      // Photo + caption = edit/generate immediately
+      await ctx.reply(`Обрабатываю (${count} фото + описание)...`);
+      await doEdit(ctx, caption);
+    } else {
+      const keyboard = new InlineKeyboard()
+        .text("Готово, генерируй", "ref:done")
+        .text("Сбросить фото", "ref:clear");
+
+      await ctx.reply(
+        `Фото ${count} сохранено как референс.\n` +
+          `Отправь ещё фото или напиши описание — что сделать с референсом.`,
+        { reply_markup: keyboard }
+      );
+    }
+  } catch (err) {
+    console.error("[photo]", err.message);
+    await ctx.reply("Не удалось обработать фото. Попробуй ещё раз.");
+  }
+});
+
+bot.callbackQuery("ref:done", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!ctx.session.refImages.length) {
+    return ctx.editMessageText("Нет сохранённых фото. Отправь фото.");
+  }
+  await ctx.editMessageText("Напиши, что сделать с фото.");
+});
+
+bot.callbackQuery("ref:clear", async (ctx) => {
+  await ctx.answerCallbackQuery("Фото сброшены");
+  ctx.session.refImages = [];
+  await ctx.editMessageText("Референсы очищены. Отправь новые фото.");
+});
+
+// ── Edit with reference images ──────────────────────────────────────
+async function doEdit(ctx, instruction) {
+  const refs = ctx.session.refImages;
+  if (!refs.length) {
+    return doGenerate(ctx, instruction);
+  }
+
+  try {
+    const enhanced = await enhancePrompt(instruction, ctx.session.style || "");
+    const result = await editImage(enhanced, refs, {
+      aspectRatio: ctx.session.aspectRatio,
+      imageSize: ctx.session.imageSize,
+    });
+
+    ctx.session.lastPrompt = enhanced;
+
+    const retryKeyboard = new InlineKeyboard()
+      .text("Повторить", "gen:retry")
+      .text("Сбросить фото", "ref:clear")
+      .row()
+      .text("Новое описание", "gen:cancel");
+
+    if (result.imageBase64) {
+      const buf = Buffer.from(result.imageBase64, "base64");
+      await ctx.replyWithPhoto(new InputFile(buf, "image.png"), {
+        caption: `${ctx.session.aspectRatio} | ${ctx.session.imageSize} | ${refs.length} ref`,
+        reply_markup: retryKeyboard,
+      });
+    } else if (result.imageUrl) {
+      await ctx.replyWithPhoto(result.imageUrl, {
+        caption: `${ctx.session.aspectRatio} | ${ctx.session.imageSize} | ${refs.length} ref`,
+        reply_markup: retryKeyboard,
+      });
+    }
+  } catch (err) {
+    console.error("[edit]", err.message);
+    await ctx.reply("Не удалось обработать. Попробуй другое описание.");
+  }
+}
+
 // ── Voice messages — transcribe via Groq Whisper ────────────────────
 bot.on(["message:voice", "message:audio"], async (ctx) => {
   await ctx.reply("Расшифровываю голос...");
@@ -252,6 +344,12 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
   if (text.startsWith("/")) return;
+
+  // If user has reference images — use edit mode
+  if (ctx.session.refImages.length > 0) {
+    await ctx.reply(`Обрабатываю с ${ctx.session.refImages.length} референсами...`);
+    return doEdit(ctx, text);
+  }
 
   await ctx.reply("Улучшаю промт...");
 
@@ -420,6 +518,32 @@ app.post("/api/generate", async (req, res) => {
   } catch (err) {
     console.error("[api/generate]", err.message);
     res.status(500).json({ error: "Generation failed" });
+  }
+});
+
+// ── Web API: edit image with reference ───────────────────────────────
+app.post("/api/edit", upload.array("images", 5), async (req, res) => {
+  try {
+    const prompt = req.body.prompt;
+    if (!prompt) return res.status(400).json({ error: "prompt is required" });
+    if (!req.files?.length) return res.status(400).json({ error: "at least 1 image required" });
+
+    const imageBase64List = req.files.map(f => f.buffer.toString("base64"));
+    const enhanced = await enhancePrompt(prompt, req.body.style || "");
+
+    const result = await editImage(enhanced, imageBase64List, {
+      aspectRatio: req.body.aspectRatio || "1:1",
+      imageSize: req.body.imageSize || "1K",
+    });
+
+    res.json({
+      enhancedPrompt: enhanced,
+      imageBase64: result.imageBase64 || null,
+      imageUrl: result.imageUrl || null,
+    });
+  } catch (err) {
+    console.error("[api/edit]", err.message);
+    res.status(500).json({ error: "Edit failed" });
   }
 });
 

@@ -153,6 +153,64 @@ export async function generateImage(prompt, imageConfig = {}) {
 }
 
 /**
+ * Edit an image: send reference image(s) + instruction → get new image.
+ * @param {string} prompt — what to do with the image
+ * @param {string[]} imageBase64List — array of base64-encoded images (references)
+ * @param {{ aspectRatio?: string, imageSize?: string }} imageConfig
+ */
+export async function editImage(prompt, imageBase64List, imageConfig = {}) {
+  // Build multimodal message: images + text instruction
+  const content = [];
+
+  for (const b64 of imageBase64List) {
+    content.push({
+      type: "image_url",
+      image_url: {
+        url: b64.startsWith("data:") ? b64 : `data:image/jpeg;base64,${b64}`,
+      },
+    });
+  }
+
+  content.push({ type: "text", text: prompt });
+
+  const body = {
+    model: IMAGE_MODEL_PRIMARY,
+    messages: [{ role: "user", content }],
+  };
+
+  if (imageConfig.aspectRatio || imageConfig.imageSize) {
+    body.image_config = {};
+    if (imageConfig.aspectRatio) body.image_config.aspect_ratio = imageConfig.aspectRatio;
+    if (imageConfig.imageSize) body.image_config.image_size = imageConfig.imageSize;
+  }
+
+  // Try OpenRouter
+  try {
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API error ${res.status}: ${err}`);
+    }
+
+    const data = await res.json();
+    const result = _extractImage(data);
+    if (result) return result;
+  } catch (err) {
+    console.warn("[edit] OpenRouter failed:", err.message);
+  }
+
+  throw new Error("Image editing failed");
+}
+
+/**
  * Internal: call an OpenAI-compatible image API and extract result.
  */
 async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {

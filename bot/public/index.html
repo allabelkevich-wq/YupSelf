@@ -281,6 +281,35 @@
         }
         footer a { color: #a78bfa; text-decoration: none; }
 
+        /* ── Reference Upload ─────────────────────────────── */
+        .ref-zone {
+            margin-bottom: 20px;
+            border: 2px dashed var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .ref-zone:hover { border-color: var(--accent-1); background: rgba(124,58,237,0.05); }
+        .ref-zone.has-files { border-color: var(--accent-1); border-style: solid; }
+        .ref-label { color: var(--text-secondary); font-size: 13px; }
+        .ref-label b { color: #a78bfa; }
+        .ref-previews {
+            display: flex; gap: 8px; margin-top: 10px;
+            flex-wrap: wrap; justify-content: center;
+        }
+        .ref-thumb {
+            width: 56px; height: 56px; border-radius: 10px;
+            object-fit: cover; border: 1px solid var(--border);
+        }
+        .ref-clear {
+            display: none; margin-top: 8px;
+            color: #f87171; font-size: 12px; cursor: pointer;
+        }
+        .ref-zone.has-files .ref-clear { display: inline; }
+        input[type="file"] { display: none; }
+
         /* ── Mobile ───────────────────────────────────────── */
         @media (max-width: 600px) {
             .page { padding: 28px 12px 40px; }
@@ -318,6 +347,14 @@
                     <line x1="8" y1="23" x2="16" y2="23"/>
                 </svg>
             </button>
+        </div>
+
+        <!-- Reference upload -->
+        <div class="ref-zone" id="refZone">
+            <input type="file" id="refInput" accept="image/*" multiple>
+            <div class="ref-label">Загрузи <b>референс</b> (фото лица, стиль, пример) или генерируй с нуля</div>
+            <div class="ref-previews" id="refPreviews"></div>
+            <span class="ref-clear" id="refClear">Очистить</span>
         </div>
 
         <div class="examples">
@@ -420,6 +457,38 @@
     updateCounter();
 
     let imgData = null;
+    let refFiles = []; // File objects for reference images
+
+    // ── Reference Upload ─────────────────────────────────
+    $("#refZone").addEventListener("click", () => $("#refInput").click());
+    $("#refInput").addEventListener("change", (e) => {
+        const files = Array.from(e.target.files);
+        if (!files.length) return;
+        refFiles = refFiles.concat(files).slice(0, 5); // max 5
+        renderRefPreviews();
+    });
+    $("#refClear").addEventListener("click", (e) => {
+        e.stopPropagation();
+        refFiles = [];
+        renderRefPreviews();
+    });
+
+    function renderRefPreviews() {
+        const box = $("#refPreviews");
+        box.innerHTML = "";
+        const zone = $("#refZone");
+        if (refFiles.length) {
+            zone.classList.add("has-files");
+            for (const f of refFiles) {
+                const img = document.createElement("img");
+                img.className = "ref-thumb";
+                img.src = URL.createObjectURL(f);
+                box.appendChild(img);
+            }
+        } else {
+            zone.classList.remove("has-files");
+        }
+    }
 
     // ── Chips ────────────────────────────────────────────
     $$(".chips").forEach(g => g.addEventListener("click", e => {
@@ -462,16 +531,29 @@
                 $("#loadingText").textContent = "Генерирую изображение...";
             }, 2000);
 
-            const res = await fetch(`${API}/api/generate`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    prompt: text,
-                    style: sel("style"),
-                    aspectRatio: sel("aspect"),
-                    imageSize: sel("size"),
-                }),
-            });
+            let res;
+            if (refFiles.length > 0) {
+                // Edit mode — send images + prompt
+                const form = new FormData();
+                form.append("prompt", text);
+                form.append("style", sel("style"));
+                form.append("aspectRatio", sel("aspect"));
+                form.append("imageSize", sel("size"));
+                for (const f of refFiles) form.append("images", f);
+                res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+            } else {
+                // Generate mode — text only
+                res = await fetch(`${API}/api/generate`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        prompt: text,
+                        style: sel("style"),
+                        aspectRatio: sel("aspect"),
+                        imageSize: sel("size"),
+                    }),
+                });
+            }
 
             if (!res.ok) throw new Error("API error");
             const data = await res.json();
