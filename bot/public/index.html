@@ -400,14 +400,10 @@
 
     // ── Telegram WebApp ──────────────────────────────────
     const tg = window.Telegram?.WebApp;
-    if (tg) {
+    const isTelegram = tg && tg.initData && tg.initData.length > 0;
+    if (isTelegram) {
         tg.ready();
         tg.expand();
-        // Adapt theme
-        if (tg.colorScheme === "light") {
-            document.documentElement.style.setProperty("--bg", "#f0f0f5");
-            document.documentElement.style.setProperty("--text-primary", "#1e293b");
-        }
     }
 
     // ── Generation counter (localStorage) ────────────────
