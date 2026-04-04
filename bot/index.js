@@ -9,12 +9,28 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const PORT = Number(process.env.PORT) || 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
+const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "")
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean);
+
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN is required");
   process.exit(1);
 }
 
 const bot = new Bot(BOT_TOKEN);
+
+/** Send a message to all admins. */
+async function notifyAdmins(text) {
+  for (const id of ADMIN_IDS) {
+    try {
+      await bot.api.sendMessage(id, text, { parse_mode: "HTML" });
+    } catch (err) {
+      console.warn(`[notify] Failed to message admin ${id}:`, err.message);
+    }
+  }
+}
 
 // ── Session ─────────────────────────────────────────────────────────
 bot.use(
@@ -344,6 +360,8 @@ async function main() {
     app.listen(PORT, async () => {
       await bot.api.setWebhook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
       console.log(`YuPself running on port ${PORT} (webhook)`);
+      const ts = new Date().toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+      await notifyAdmins(`<b>YuPself обновлён</b>\n${ts} MSK`);
     });
   } else {
     app.listen(PORT, () => console.log(`Health check on port ${PORT}`));
