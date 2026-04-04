@@ -14,8 +14,13 @@ export async function transcribeAudio(audioBuffer, filename = "voice.ogg") {
     throw new Error("GROQ_API_KEY not configured");
   }
 
+  // Determine MIME type from filename
+  const ext = filename.split(".").pop()?.toLowerCase() || "ogg";
+  const mimeMap = { ogg: "audio/ogg", oga: "audio/ogg", mp3: "audio/mpeg", wav: "audio/wav", webm: "audio/webm", m4a: "audio/mp4" };
+  const mime = mimeMap[ext] || "audio/ogg";
+
   const formData = new FormData();
-  formData.append("file", new Blob([audioBuffer]), filename);
+  formData.append("file", new File([audioBuffer], filename, { type: mime }));
   formData.append("model", "whisper-large-v3");
   formData.append("language", "ru");
   formData.append("response_format", "text");

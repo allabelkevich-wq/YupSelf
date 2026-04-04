@@ -329,10 +329,15 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
   try {
     const file = await ctx.getFile();
     const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    console.log("[voice] file_path:", file.file_path, "size:", ctx.message.voice?.file_size || ctx.message.audio?.file_size);
+
     const res = await fetch(fileUrl);
     const buffer = Buffer.from(await res.arrayBuffer());
+    console.log("[voice] downloaded buffer:", buffer.length, "bytes");
 
-    const text = await transcribeAudio(buffer, file.file_path || "voice.ogg");
+    // Telegram voice = .oga (Opus), rename to .ogg for Groq compatibility
+    const filename = (file.file_path || "voice.oga").replace(/\.oga$/, ".ogg");
+    const text = await transcribeAudio(buffer, filename);
 
     if (!text) {
       return ctx.reply("Не удалось распознать речь. Попробуй ещё раз.");
