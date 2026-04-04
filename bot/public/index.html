@@ -13,13 +13,13 @@
             --surface-hover: rgba(255, 255, 255, 0.08);
             --surface-glass: rgba(15, 15, 40, 0.6);
             --accent-1: #f59e0b;
-            --accent-2: #22c55e;
-            --accent-3: #ef4444;
+            --accent-2: #f97316;
+            --accent-3: #eab308;
             --text-primary: #f1f5f9;
             --text-secondary: #64748b;
             --border: rgba(255, 255, 255, 0.06);
             --border-bright: rgba(245, 158, 11, 0.3);
-            --glow: rgba(245, 158, 11, 0.15);
+            --glow: rgba(249, 115, 22, 0.25);
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -79,10 +79,10 @@
         header { text-align: center; margin-bottom: 40px; }
         .logo {
             font-size: 48px; font-weight: 800; letter-spacing: -2px;
-            background: linear-gradient(135deg, #f59e0b 0%, #22c55e 50%, #34d399 100%);
+            background: linear-gradient(135deg, #f59e0b 0%, #f97316 50%, #ea580c 100%);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
         }
-        .subtitle { color: var(--text-secondary); font-size: 15px; margin-top: 6px; font-weight: 400; }
+        .subtitle { color: #d4a574; font-size: 15px; margin-top: 6px; font-weight: 400; }
 
         /* ── Glass Panel ─────────────────────────────────── */
         .glass {
@@ -129,7 +129,7 @@
             cursor: pointer;
             transition: all 0.2s;
         }
-        .voice-btn svg { width: 18px; height: 18px; stroke: #fbbf24; }
+        .voice-btn svg { width: 18px; height: 18px; stroke: #f59e0b; }
         .voice-btn:hover { background: rgba(245, 158, 11, 0.25); transform: scale(1.05); }
         .voice-btn.recording {
             background: rgba(239, 68, 68, 0.2);
@@ -203,7 +203,7 @@
             text-align: center; margin-bottom: 20px;
             font-size: 13px; color: var(--text-secondary);
         }
-        .counter b { color: #fbbf24; }
+        .counter b { color: #f59e0b; }
         .limit-msg {
             display: none; margin-top: 16px; padding: 16px;
             background: rgba(239, 68, 68, 0.1);
@@ -279,7 +279,7 @@
             margin-top: 48px; text-align: center;
             color: var(--text-secondary); font-size: 12px;
         }
-        footer a { color: #fbbf24; text-decoration: none; }
+        footer a { color: #f59e0b; text-decoration: none; }
 
         /* ── Reference Upload ─────────────────────────────── */
         .ref-zone {
@@ -294,7 +294,7 @@
         .ref-zone:hover { border-color: var(--accent-1); background: rgba(124,58,237,0.05); }
         .ref-zone.has-files { border-color: var(--accent-1); border-style: solid; }
         .ref-label { color: var(--text-secondary); font-size: 13px; }
-        .ref-label b { color: #fbbf24; }
+        .ref-label b { color: #f59e0b; }
         .ref-previews {
             display: flex; gap: 8px; margin-top: 10px;
             flex-wrap: wrap; justify-content: center;
@@ -415,7 +415,7 @@
 
         <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:16px;">
             <div style="padding:14px; background:rgba(124,58,237,0.06); border-radius:14px; border:1px solid rgba(124,58,237,0.12);">
-                <div style="font-size:14px; font-weight:700; color:#fbbf24; margin-bottom:6px;">Генерация с нуля</div>
+                <div style="font-size:14px; font-weight:700; color:#f59e0b; margin-bottom:6px;">Генерация с нуля</div>
                 <div style="font-size:12px; color:#94a3b8; line-height:1.5;">
                     Напиши описание — получи картинку.<br>
                     "Кот-астронавт на Луне"<br>
@@ -424,7 +424,7 @@
                 </div>
             </div>
             <div style="padding:14px; background:rgba(59,130,246,0.06); border-radius:14px; border:1px solid rgba(59,130,246,0.12);">
-                <div style="font-size:14px; font-weight:700; color:#4ade80; margin-bottom:6px;">Редактирование фото</div>
+                <div style="font-size:14px; font-weight:700; color:#fb923c; margin-bottom:6px;">Редактирование фото</div>
                 <div style="font-size:12px; color:#94a3b8; line-height:1.5;">
                     Загрузи фото + напиши что сделать.<br>
                     "Сделай в стиле комикса"<br>
