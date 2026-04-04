@@ -1,0 +1,19 @@
+{
+  "name": "yupself",
+  "version": "1.0.0",
+  "description": "Telegram bot for AI image generation with DARAI payments on NEAR",
+  "type": "module",
+  "main": "bot/index.js",
+  "scripts": {
+    "start": "node bot/index.js",
+    "dev": "node --watch bot/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "grammy": "^1.28.0",
+    "express": "^5.0.0",
+    "dotenv": "^16.4.0"
+  }
+}
