@@ -362,31 +362,6 @@
             <button class="chip on" id="yupikBtn" style="padding:8px 18px; font-size:13px;">Создать Юпика</button>
         </div>
 
-        <div class="examples">
-            <span class="ex" data-p="Кот-астронавт на поверхности Луны">Кот-астронавт</span>
-            <span class="ex" data-p="Закат над океаном в стиле масляной живописи">Закат маслом</span>
-            <span class="ex" data-p="Минималистичный логотип для кофейни">Логотип кофейни</span>
-            <span class="ex" data-p="Футуристический город ночью">Город будущего</span>
-            <span class="ex" data-p="Портрет девушки в стиле аниме">Аниме портрет</span>
-        </div>
-
-        <!-- Стиль скрыт по умолчанию, AI выбирает сам -->
-        <div class="prompt-acc" id="styleToggle" style="margin-bottom:12px;">Выбрать стиль (опционально)</div>
-        <div class="prompt-body" id="styleBody" style="padding:12px; background:transparent;">
-            <div class="chips" data-g="style">
-                <button class="chip" data-v="">AI выберет</button>
-                <button class="chip" data-v="photorealistic, 8k, shot on Hasselblad">Фото</button>
-                <button class="chip" data-v="cinematic still, anamorphic lens, volumetric fog">Кино</button>
-                <button class="chip" data-v="anime style, Studio Ghibli quality, vibrant">Аниме</button>
-                <button class="chip" data-v="oil painting, rich impasto, classical composition">Масло</button>
-                <button class="chip" data-v="digital concept art, matte painting, epic scale">Концепт-арт</button>
-                <button class="chip" data-v="watercolor, wet-on-wet, soft bleeding edges">Акварель</button>
-                <button class="chip" data-v="3D render, octane, cinematic global illumination">3D</button>
-                <button class="chip" data-v="minimalist design, clean, negative space">Минимализм</button>
-                <button class="chip" data-v="surrealist, dreamlike, impossible geometry">Сюрреализм</button>
-            </div>
-        </div>
-
         <div class="label">Формат</div>
         <div class="chips" data-g="aspect">
             <button class="chip on" data-v="1:1">1:1</button>
@@ -552,12 +527,6 @@
         c.classList.add("on");
     }));
 
-    // ── Examples ─────────────────────────────────────────
-    $$(".ex").forEach(e => e.addEventListener("click", () => {
-        $("#prompt").value = e.dataset.p;
-        $("#prompt").focus();
-    }));
-
     function sel(g) { return $(`[data-g="${g}"] .on`)?.dataset.v || ""; }
 
     // ── Generate ─────────────────────────────────────────
@@ -703,13 +672,6 @@
             $("#prompt").value = YUPIK_BASE;
         }
         $("#prompt").focus();
-    });
-
-    // ── Style toggle ─────────────────────────────────────
-    $("#styleToggle").addEventListener("click", () => {
-        const b = $("#styleBody");
-        b.classList.toggle("open");
-        $("#styleToggle").textContent = b.classList.contains("open") ? "Скрыть стили" : "Выбрать стиль (опционально)";
     });
 
     // ── Accordion ────────────────────────────────────────
