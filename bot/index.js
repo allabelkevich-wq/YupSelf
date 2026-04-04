@@ -369,6 +369,21 @@ app.use("/api", (_req, res, next) => {
   next();
 });
 
+// ── Web API: voice transcription ────────────────────────────────────
+import multer from "multer";
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "audio file required" });
+    const text = await transcribeAudio(req.file.buffer, req.file.originalname || "voice.webm");
+    res.json({ text });
+  } catch (err) {
+    console.error("[api/transcribe]", err.message);
+    res.status(500).json({ error: "Transcription failed" });
+  }
+});
+
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, style, aspectRatio, imageSize } = req.body;

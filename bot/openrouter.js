@@ -191,7 +191,23 @@ async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
  */
 function _extractImage(data) {
   const message = data.choices?.[0]?.message;
-  if (!message?.content) return null;
+  if (!message) return null;
+
+  // Format 0: message.images[] (Gemini via OpenRouter)
+  if (message.images?.length) {
+    for (const img of message.images) {
+      const url = img.image_url?.url || img.url || img.b64_json;
+      if (url) {
+        if (url.startsWith("data:image")) {
+          return { imageBase64: url.replace(/^data:image\/\w+;base64,/, "") };
+        }
+        if (url.startsWith("http")) return { imageUrl: url };
+        return { imageBase64: url };
+      }
+    }
+  }
+
+  if (!message.content) return null;
 
   // Format 1: Array with image parts (OpenRouter style)
   if (Array.isArray(message.content)) {
