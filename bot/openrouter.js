@@ -226,6 +226,9 @@ async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
     if (imageConfig.image_size) body.image_config.image_size = imageConfig.image_size;
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
   const res = await fetch(apiUrl, {
     method: "POST",
     headers: {
@@ -233,7 +236,9 @@ async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: controller.signal,
   });
+  clearTimeout(timeout);
 
   if (!res.ok) {
     const err = await res.text();

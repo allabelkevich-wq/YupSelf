@@ -548,21 +548,27 @@ app.post("/api/generate", async (req, res) => {
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     jobs.set(jobId, { status: "processing", prompt });
 
-    // Start generation in background
-    generateImage(prompt, {
+    // Start generation in background with timeout
+    console.log(`[job ${jobId}] starting generation: "${prompt.slice(0, 50)}..."`);
+    const genPromise = generateImage(prompt, {
       aspectRatio: aspectRatio || "1:1",
       imageSize: imageSize || "1K",
-    }).then(result => {
+    });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Generation timeout (90s)")), 90000)
+    );
+
+    Promise.race([genPromise, timeoutPromise]).then(result => {
+      console.log(`[job ${jobId}] done! base64: ${(result.imageBase64||'').length} chars`);
       jobs.set(jobId, {
         status: "done",
         prompt,
         imageBase64: result.imageBase64 || null,
         imageUrl: result.imageUrl || null,
       });
-      // Clean up after 5 minutes
       setTimeout(() => jobs.delete(jobId), 300000);
     }).catch(err => {
-      console.error("[generate]", err.message);
+      console.error(`[job ${jobId}] error:`, err.message);
       jobs.set(jobId, { status: "error", error: err.message });
       setTimeout(() => jobs.delete(jobId), 60000);
     });
