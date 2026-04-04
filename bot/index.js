@@ -38,10 +38,10 @@ bot.use(
     initial: () => ({
       pendingPrompt: null,
       lastPrompt: null,
-      style: null,
+      style: null, // null = AI выбирает сам
       aspectRatio: "1:1",
       imageSize: "1K",
-      refImages: [], // base64 reference images for editing
+      refImages: [],
     }),
   })
 );
