@@ -10,7 +10,7 @@ const LAOZHANG_URL = "https://api.laozhang.ai/v1/chat/completions";
 const IMAGE_MODEL_PRIMARY = "google/gemini-3-pro-image-preview";
 const IMAGE_MODEL_FALLBACK = "gemini-3-pro-image-preview-c";
 // Text model for prompt enhancement
-const TEXT_MODEL = "google/gemini-2.5-flash-preview";
+const TEXT_MODEL = "google/gemini-2.5-flash";
 
 // ── NEGATIVE PROMPT — what to NEVER generate ────────────────────────
 const NEGATIVE_PROMPT = `
