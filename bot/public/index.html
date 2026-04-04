@@ -12,14 +12,14 @@
             --surface: rgba(255, 255, 255, 0.04);
             --surface-hover: rgba(255, 255, 255, 0.08);
             --surface-glass: rgba(15, 15, 40, 0.6);
-            --accent-1: #7c3aed;
-            --accent-2: #3b82f6;
-            --accent-3: #06b6d4;
+            --accent-1: #f59e0b;
+            --accent-2: #22c55e;
+            --accent-3: #ef4444;
             --text-primary: #f1f5f9;
             --text-secondary: #64748b;
             --border: rgba(255, 255, 255, 0.06);
-            --border-bright: rgba(124, 58, 237, 0.3);
-            --glow: rgba(124, 58, 237, 0.15);
+            --border-bright: rgba(245, 158, 11, 0.3);
+            --glow: rgba(245, 158, 11, 0.15);
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -79,7 +79,7 @@
         header { text-align: center; margin-bottom: 40px; }
         .logo {
             font-size: 48px; font-weight: 800; letter-spacing: -2px;
-            background: linear-gradient(135deg, #a78bfa 0%, #60a5fa 50%, #22d3ee 100%);
+            background: linear-gradient(135deg, #f59e0b 0%, #22c55e 50%, #34d399 100%);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
         }
         .subtitle { color: var(--text-secondary); font-size: 15px; margin-top: 6px; font-weight: 400; }
@@ -114,7 +114,7 @@
         }
         textarea::placeholder { color: var(--text-secondary); }
         textarea:focus {
-            border-color: rgba(124, 58, 237, 0.5);
+            border-color: rgba(245, 158, 11, 0.5);
             box-shadow: 0 0 0 3px var(--glow), 0 0 20px var(--glow);
         }
 
@@ -122,15 +122,15 @@
         .voice-btn {
             position: absolute; right: 14px; top: 14px;
             width: 36px; height: 36px;
-            background: rgba(124, 58, 237, 0.15);
-            border: 1px solid rgba(124, 58, 237, 0.3);
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.3);
             border-radius: 10px;
             display: flex; align-items: center; justify-content: center;
             cursor: pointer;
             transition: all 0.2s;
         }
-        .voice-btn svg { width: 18px; height: 18px; stroke: #a78bfa; }
-        .voice-btn:hover { background: rgba(124, 58, 237, 0.25); transform: scale(1.05); }
+        .voice-btn svg { width: 18px; height: 18px; stroke: #fbbf24; }
+        .voice-btn:hover { background: rgba(245, 158, 11, 0.25); transform: scale(1.05); }
         .voice-btn.recording {
             background: rgba(239, 68, 68, 0.2);
             border-color: rgba(239, 68, 68, 0.5);
@@ -147,13 +147,13 @@
         .ex {
             padding: 5px 12px;
             border-radius: 9999px;
-            background: rgba(124, 58, 237, 0.08);
-            border: 1px solid rgba(124, 58, 237, 0.15);
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.15);
             color: #94a3b8; font-size: 12px;
             cursor: pointer; white-space: nowrap;
             transition: all 0.2s;
         }
-        .ex:hover { background: rgba(124, 58, 237, 0.18); color: #e2e8f0; transform: translateY(-1px); }
+        .ex:hover { background: rgba(245, 158, 11, 0.18); color: #e2e8f0; transform: translateY(-1px); }
 
         /* ── Section Label ───────────────────────────────── */
         .label {
@@ -179,7 +179,7 @@
         .chip.on {
             background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
             color: white; border-color: transparent; font-weight: 600;
-            box-shadow: 0 2px 10px rgba(124, 58, 237, 0.3);
+            box-shadow: 0 2px 10px rgba(245, 158, 11, 0.3);
         }
 
         /* ── Generate Button ─────────────────────────────── */
@@ -191,10 +191,10 @@
             font-family: 'Manrope', sans-serif;
             font-size: 16px; font-weight: 800;
             cursor: pointer;
-            box-shadow: 0 8px 25px rgba(124, 58, 237, 0.3);
+            box-shadow: 0 8px 25px rgba(245, 158, 11, 0.3);
             transition: all 0.3s;
         }
-        .gen-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 12px 35px rgba(124, 58, 237, 0.45); }
+        .gen-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 12px 35px rgba(245, 158, 11, 0.45); }
         .gen-btn:active:not(:disabled) { transform: translateY(0); }
         .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -203,7 +203,7 @@
             text-align: center; margin-bottom: 20px;
             font-size: 13px; color: var(--text-secondary);
         }
-        .counter b { color: #a78bfa; }
+        .counter b { color: #fbbf24; }
         .limit-msg {
             display: none; margin-top: 16px; padding: 16px;
             background: rgba(239, 68, 68, 0.1);
@@ -279,7 +279,7 @@
             margin-top: 48px; text-align: center;
             color: var(--text-secondary); font-size: 12px;
         }
-        footer a { color: #a78bfa; text-decoration: none; }
+        footer a { color: #fbbf24; text-decoration: none; }
 
         /* ── Reference Upload ─────────────────────────────── */
         .ref-zone {
@@ -294,7 +294,7 @@
         .ref-zone:hover { border-color: var(--accent-1); background: rgba(124,58,237,0.05); }
         .ref-zone.has-files { border-color: var(--accent-1); border-style: solid; }
         .ref-label { color: var(--text-secondary); font-size: 13px; }
-        .ref-label b { color: #a78bfa; }
+        .ref-label b { color: #fbbf24; }
         .ref-previews {
             display: flex; gap: 8px; margin-top: 10px;
             flex-wrap: wrap; justify-content: center;
@@ -382,10 +382,7 @@
         </div>
 
         <div class="counter" id="counter">Генераций: <b id="genCount">0</b> из <b>100</b></div>
-        <div style="display:flex; gap:8px; margin-top:8px;">
-            <button class="gen-btn" id="genBtn" style="flex:3;">Сгенерировать</button>
-            <button class="gen-btn" id="enhanceBtn" style="flex:1; background:rgba(124,58,237,0.15); border:1px solid rgba(124,58,237,0.3); box-shadow:none; font-size:12px; font-weight:600;">Улучшить промт</button>
-        </div>
+        <button class="gen-btn" id="genBtn" style="margin-top:8px;">Сгенерировать</button>
         <div class="limit-msg" id="limitMsg">Бесплатные генерации закончились. Скоро здесь появится оплата.</div>
 
         <!-- Loading -->
@@ -418,7 +415,7 @@
 
         <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:16px;">
             <div style="padding:14px; background:rgba(124,58,237,0.06); border-radius:14px; border:1px solid rgba(124,58,237,0.12);">
-                <div style="font-size:14px; font-weight:700; color:#a78bfa; margin-bottom:6px;">Генерация с нуля</div>
+                <div style="font-size:14px; font-weight:700; color:#fbbf24; margin-bottom:6px;">Генерация с нуля</div>
                 <div style="font-size:12px; color:#94a3b8; line-height:1.5;">
                     Напиши описание — получи картинку.<br>
                     "Кот-астронавт на Луне"<br>
@@ -427,7 +424,7 @@
                 </div>
             </div>
             <div style="padding:14px; background:rgba(59,130,246,0.06); border-radius:14px; border:1px solid rgba(59,130,246,0.12);">
-                <div style="font-size:14px; font-weight:700; color:#60a5fa; margin-bottom:6px;">Редактирование фото</div>
+                <div style="font-size:14px; font-weight:700; color:#4ade80; margin-bottom:6px;">Редактирование фото</div>
                 <div style="font-size:12px; color:#94a3b8; line-height:1.5;">
                     Загрузи фото + напиши что сделать.<br>
                     "Сделай в стиле комикса"<br>
@@ -529,6 +526,19 @@
 
     function sel(g) { return $(`[data-g="${g}"] .on`)?.dataset.v || ""; }
 
+    // ── Poll job result ───────────────────────────────────
+    async function pollJob(jobId) {
+        for (let i = 0; i < 60; i++) { // max 3 minutes
+            await new Promise(r => setTimeout(r, 3000));
+            const res = await fetch(`${API}/api/job/${jobId}`);
+            if (!res.ok) throw new Error("Poll error " + res.status);
+            const job = await res.json();
+            if (job.status === "done") return job;
+            if (job.status === "error") throw new Error(job.error || "Generation failed");
+        }
+        throw new Error("Таймаут генерации");
+    }
+
     // ── Generate ─────────────────────────────────────────
     async function generate() {
         const text = $("#prompt").value.trim();
@@ -542,49 +552,48 @@
         $("#result").classList.remove("visible");
         loading.classList.add("visible");
 
-        // Loading steps animation
+        // Loading animation
         $("#dot1").classList.add("done");
         $("#dot2").classList.remove("done");
         $("#dot3").classList.remove("done");
-        $("#loadingText").textContent = "Улучшаю промт...";
+        $("#loadingText").textContent = "Генерирую изображение...";
 
         try {
             setTimeout(() => {
                 $("#dot2").classList.add("done");
-                $("#loadingText").textContent = "Генерирую изображение...";
-            }, 2000);
+                $("#loadingText").textContent = "Ожидаю результат...";
+            }, 10000);
 
-            let res;
+            let data;
             if (refFiles.length > 0) {
-                // Edit mode — send images + prompt
+                // Edit mode — direct (no polling needed, usually fast)
                 const form = new FormData();
                 form.append("prompt", text);
-                form.append("style", sel("style"));
                 form.append("aspectRatio", sel("aspect"));
                 form.append("imageSize", sel("size"));
                 for (const f of refFiles) form.append("images", f);
-                res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                const res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                if (!res.ok) throw new Error("Edit error " + res.status);
+                data = await res.json();
             } else {
-                // Generate mode — text only
-                res = await fetch(`${API}/api/generate`, {
+                // Generate mode — async with polling
+                const startRes = await fetch(`${API}/api/generate`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         prompt: text,
-                        style: sel("style"),
                         aspectRatio: sel("aspect"),
                         imageSize: sel("size"),
                     }),
                 });
-            }
+                if (!startRes.ok) throw new Error("API error " + startRes.status);
+                const { jobId } = await startRes.json();
+                if (!jobId) throw new Error("No jobId");
+                currentJobId = jobId;
 
-            if (!res.ok) {
-                const errText = await res.text();
-                console.error("API error:", res.status, errText);
-                throw new Error("API error " + res.status);
+                // Poll for result
+                data = await pollJob(jobId);
             }
-            const data = await res.json();
-            console.log("API response keys:", Object.keys(data), "base64 len:", data.imageBase64?.length);
 
             $("#dot3").classList.add("done");
             $("#loadingText").textContent = "Готово!";
@@ -595,7 +604,7 @@
             } else if (data.imageUrl) {
                 $("#resultImg").src = data.imageUrl;
                 imgData = null;
-            } else throw new Error("No image");
+            } else throw new Error(data.error || "No image");
 
             $("#accBody").textContent = data.enhancedPrompt || text;
 
@@ -625,28 +634,6 @@
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); }
     });
 
-    // ── Enhance prompt button ────────────────────────────
-    $("#enhanceBtn").addEventListener("click", async () => {
-        const text = $("#prompt").value.trim();
-        if (!text) { $("#prompt").focus(); return; }
-        $("#enhanceBtn").disabled = true;
-        $("#enhanceBtn").textContent = "...";
-        try {
-            const res = await fetch(`${API}/api/enhance`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ prompt: text, style: sel("style") }),
-            });
-            const data = await res.json();
-            if (data.enhancedPrompt) $("#prompt").value = data.enhancedPrompt;
-        } catch (err) {
-            console.error("Enhance error:", err);
-        } finally {
-            $("#enhanceBtn").disabled = false;
-            $("#enhanceBtn").textContent = "Улучшить промт";
-        }
-    });
-
     // ── Retry / New / Download ───────────────────────────
     $("#retryBtn").addEventListener("click", generate);
     $("#newBtn").addEventListener("click", () => {
@@ -654,11 +641,17 @@
         $("#result").classList.remove("visible");
         $("#prompt").focus();
     });
+    let currentJobId = null;
     $("#dlBtn").addEventListener("click", () => {
-        const a = document.createElement("a");
-        a.href = imgData ? `data:image/png;base64,${imgData}` : $("#resultImg").src;
-        a.download = `yupself-${Date.now()}.png`;
-        a.click();
+        if (currentJobId) {
+            // Open download URL directly (works in Telegram WebView)
+            window.open(`${API}/api/download/${currentJobId}`, "_blank");
+        } else if (imgData) {
+            const a = document.createElement("a");
+            a.href = `data:image/png;base64,${imgData}`;
+            a.download = `yupself-${Date.now()}.png`;
+            a.click();
+        }
     });
 
     // ── Yupik mascot ─────────────────────────────────────

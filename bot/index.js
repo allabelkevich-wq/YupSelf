@@ -535,39 +535,57 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
-// ── Web API: enhance prompt only ─────────────────────────────────────
-app.post("/api/enhance", async (req, res) => {
-  try {
-    const { prompt, style } = req.body;
-    if (!prompt) return res.status(400).json({ error: "prompt is required" });
-    const enhanced = await enhancePrompt(prompt, style || "");
-    res.json({ enhancedPrompt: enhanced });
-  } catch (err) {
-    console.error("[api/enhance]", err.message);
-    res.status(500).json({ error: "Enhancement failed" });
-  }
-});
+// ── Async job store ──────────────────────────────────────────────────
+const jobs = new Map();
 
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, style, aspectRatio, imageSize } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
 
-    // Generate directly from user prompt — no auto-enhancement
-    const result = await generateImage(prompt, {
+    // Create job and return immediately
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    jobs.set(jobId, { status: "processing", prompt });
+
+    // Start generation in background
+    generateImage(prompt, {
       aspectRatio: aspectRatio || "1:1",
       imageSize: imageSize || "1K",
+    }).then(result => {
+      jobs.set(jobId, {
+        status: "done",
+        prompt,
+        imageBase64: result.imageBase64 || null,
+        imageUrl: result.imageUrl || null,
+      });
+      // Clean up after 5 minutes
+      setTimeout(() => jobs.delete(jobId), 300000);
+    }).catch(err => {
+      console.error("[generate]", err.message);
+      jobs.set(jobId, { status: "error", error: err.message });
+      setTimeout(() => jobs.delete(jobId), 60000);
     });
 
-    res.json({
-      enhancedPrompt: prompt,
-      imageBase64: result.imageBase64 || null,
-      imageUrl: result.imageUrl || null,
-    });
+    res.json({ jobId });
   } catch (err) {
-    console.error("[api/generate]", err.message, err.stack?.slice(0, 200));
-    res.status(500).json({ error: "Generation failed: " + err.message });
+    res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/api/job/:id", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  res.json(job);
+});
+
+// Download image as file (works in Telegram WebView)
+app.get("/api/download/:id", (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job?.imageBase64) return res.status(404).send("Not found");
+  const buf = Buffer.from(job.imageBase64, "base64");
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Content-Disposition", `attachment; filename="yupself-${req.params.id}.png"`);
+  res.send(buf);
 });
 
 // ── Web API: edit image with reference ───────────────────────────────
