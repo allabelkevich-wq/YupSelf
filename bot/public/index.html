@@ -401,8 +401,11 @@
             <button class="chip" data-v="4K">4K</button>
         </div>
 
-        <div class="counter" id="counter">Генераций: <b id="genCount">0</b> из <b>3</b> бесплатных</div>
-        <button class="gen-btn" id="genBtn">Сгенерировать</button>
+        <div class="counter" id="counter">Генераций: <b id="genCount">0</b> из <b>100</b></div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="gen-btn" id="genBtn" style="flex:3;">Сгенерировать</button>
+            <button class="gen-btn" id="enhanceBtn" style="flex:1; background:rgba(124,58,237,0.15); border:1px solid rgba(124,58,237,0.3); box-shadow:none; font-size:12px; font-weight:600;">Улучшить промт</button>
+        </div>
         <div class="limit-msg" id="limitMsg">Бесплатные генерации закончились. Скоро здесь появится оплата.</div>
 
         <!-- Loading -->
@@ -648,6 +651,28 @@
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); }
     });
 
+    // ── Enhance prompt button ────────────────────────────
+    $("#enhanceBtn").addEventListener("click", async () => {
+        const text = $("#prompt").value.trim();
+        if (!text) { $("#prompt").focus(); return; }
+        $("#enhanceBtn").disabled = true;
+        $("#enhanceBtn").textContent = "...";
+        try {
+            const res = await fetch(`${API}/api/enhance`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ prompt: text, style: sel("style") }),
+            });
+            const data = await res.json();
+            if (data.enhancedPrompt) $("#prompt").value = data.enhancedPrompt;
+        } catch (err) {
+            console.error("Enhance error:", err);
+        } finally {
+            $("#enhanceBtn").disabled = false;
+            $("#enhanceBtn").textContent = "Улучшить промт";
+        }
+    });
+
     // ── Retry / New / Download ───────────────────────────
     $("#retryBtn").addEventListener("click", generate);
     $("#newBtn").addEventListener("click", () => {
@@ -715,8 +740,12 @@
             mediaRec.start();
             recording = true;
             vb.classList.add("recording");
-        } catch {
-            alert("Нет доступа к микрофону");
+        } catch (err) {
+            if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+                alert("Микрофон заблокирован.\n\nMac: Системные настройки → Конфиденциальность → Микрофон → включи для браузера.\n\niPhone/Android: Настройки → Safari/Chrome → Микрофон → Разрешить.");
+            } else {
+                alert("Микрофон недоступен: " + (err.message || "неизвестная ошибка"));
+            }
         }
     });
 })();

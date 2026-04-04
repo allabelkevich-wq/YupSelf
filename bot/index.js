@@ -373,19 +373,16 @@ bot.on("message:text", async (ctx) => {
     return doEdit(ctx, text);
   }
 
-  await ctx.reply("Улучшаю промт...");
+  // Generate directly from user's prompt, no auto-enhancement
+  ctx.session.pendingPrompt = text;
 
-  try {
-    const enhanced = await enhancePrompt(text, ctx.session.style || "");
-    ctx.session.pendingPrompt = enhanced;
+  const keyboard = new InlineKeyboard()
+    .text("Сгенерировать", "gen:confirm")
+    .text("Улучшить промт", "gen:enhance")
+    .row()
+    .text("Отмена", "gen:cancel");
 
-    const keyboard = new InlineKeyboard()
-      .text("Сгенерировать", "gen:confirm")
-      .text("Переделать промт", "gen:redo")
-      .row()
-      .text("Отмена", "gen:cancel");
-
-    await ctx.reply(`Промт:\n\n${enhanced}`, { reply_markup: keyboard });
+  await ctx.reply(`Промт:\n\n${text}\n\nНажми "Сгенерировать" или "Улучшить промт" если хочешь помощь AI.`, { reply_markup: keyboard });
   } catch (err) {
     console.error("[enhance]", err.message);
     await ctx.reply("Не удалось улучшить промт. Попробуй ещё раз.");
@@ -402,6 +399,27 @@ bot.callbackQuery("gen:confirm", async (ctx) => {
   ctx.session.pendingPrompt = null;
   await ctx.editMessageText("Генерирую изображение...");
   await doGenerate(ctx, prompt, true);
+});
+
+bot.callbackQuery("gen:enhance", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const prompt = ctx.session.pendingPrompt;
+  if (!prompt) return ctx.editMessageText("Промт не найден.");
+
+  await ctx.editMessageText("Улучшаю промт...");
+  try {
+    const enhanced = await enhancePrompt(prompt, ctx.session.style || "");
+    ctx.session.pendingPrompt = enhanced;
+
+    const keyboard = new InlineKeyboard()
+      .text("Сгенерировать", "gen:confirm")
+      .text("Отмена", "gen:cancel");
+
+    await ctx.reply(`Улучшенный промт:\n\n${enhanced}`, { reply_markup: keyboard });
+  } catch {
+    await ctx.reply("Не удалось улучшить. Генерирую как есть.");
+    await doGenerate(ctx, prompt, true);
+  }
 });
 
 bot.callbackQuery("gen:redo", async (ctx) => {
@@ -518,22 +536,32 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
+// ── Web API: enhance prompt only ─────────────────────────────────────
+app.post("/api/enhance", async (req, res) => {
+  try {
+    const { prompt, style } = req.body;
+    if (!prompt) return res.status(400).json({ error: "prompt is required" });
+    const enhanced = await enhancePrompt(prompt, style || "");
+    res.json({ enhancedPrompt: enhanced });
+  } catch (err) {
+    console.error("[api/enhance]", err.message);
+    res.status(500).json({ error: "Enhancement failed" });
+  }
+});
+
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, style, aspectRatio, imageSize } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
 
-    // Enhance prompt via DeepSeek
-    const enhanced = await enhancePrompt(prompt, style || "");
-
-    // Generate image
-    const result = await generateImage(enhanced, {
+    // Generate directly from user prompt — no auto-enhancement
+    const result = await generateImage(prompt, {
       aspectRatio: aspectRatio || "1:1",
       imageSize: imageSize || "1K",
     });
 
     res.json({
-      enhancedPrompt: enhanced,
+      enhancedPrompt: prompt,
       imageBase64: result.imageBase64 || null,
       imageUrl: result.imageUrl || null,
     });
