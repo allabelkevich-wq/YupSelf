@@ -2,6 +2,7 @@ import "dotenv/config";
 import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
 import { enhancePrompt, generateImage } from "./openrouter.js";
+import { transcribeAudio } from "./groq.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -181,6 +182,40 @@ bot.command("imagine", async (ctx) => {
     return ctx.reply("Напиши описание после /imagine\nПример: /imagine кот в космосе");
   }
   await doGenerate(ctx, text);
+});
+
+// ── Voice messages — transcribe via Groq Whisper ────────────────────
+bot.on(["message:voice", "message:audio"], async (ctx) => {
+  await ctx.reply("Расшифровываю голос...");
+
+  try {
+    const file = await ctx.getFile();
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    const res = await fetch(fileUrl);
+    const buffer = Buffer.from(await res.arrayBuffer());
+
+    const text = await transcribeAudio(buffer, file.file_path || "voice.ogg");
+
+    if (!text) {
+      return ctx.reply("Не удалось распознать речь. Попробуй ещё раз.");
+    }
+
+    await ctx.reply(`Распознано: "${text}"\n\nУлучшаю промт...`);
+
+    const enhanced = await enhancePrompt(text, ctx.session.style || "");
+    ctx.session.pendingPrompt = enhanced;
+
+    const keyboard = new InlineKeyboard()
+      .text("Сгенерировать", "gen:confirm")
+      .text("Переделать промт", "gen:redo")
+      .row()
+      .text("Отмена", "gen:cancel");
+
+    await ctx.reply(`Промт:\n\n${enhanced}`, { reply_markup: keyboard });
+  } catch (err) {
+    console.error("[voice]", err.message);
+    await ctx.reply("Ошибка расшифровки. Попробуй отправить текстом.");
+  }
 });
 
 // ── Text messages — enhance prompt + confirm ────────────────────────
