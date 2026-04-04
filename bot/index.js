@@ -4,6 +4,7 @@ import express from "express";
 import { enhancePrompt, generateImage, editImage } from "./openrouter.js";
 import { transcribeAudio } from "./groq.js";
 import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
+import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -639,6 +640,41 @@ app.post("/api/favorite/:id", async (req, res) => {
     const { telegramId } = req.body;
     const result = await toggleFavorite(Number(req.params.id), telegramId);
     res.json({ isFavorite: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DaraiPay API ────────────────────────────────────────────────────
+app.get("/api/packages", (_req, res) => {
+  res.json({ packages: PACKAGES, merchantAccount: MERCHANT_ACCOUNT });
+});
+
+app.post("/api/payment/create", async (req, res) => {
+  try {
+    const { telegramId, packageId } = req.body;
+    if (!telegramId || !packageId) return res.status(400).json({ error: "telegramId and packageId required" });
+    const payment = await createPayment(telegramId, packageId);
+    res.json(payment);
+  } catch (err) {
+    console.error("[darai-pay]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/payment/check/:id", async (req, res) => {
+  try {
+    const result = await checkPayment(Number(req.params.id));
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/payment/pending/:telegramId", async (req, res) => {
+  try {
+    const payments = await getPendingPayments(Number(req.params.telegramId));
+    res.json(payments);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

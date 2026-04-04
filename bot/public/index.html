@@ -630,6 +630,52 @@
     </div>
     </div><!-- /tabCabinet -->
 
+    <!-- ═══ PAYMENT MODAL ═══ -->
+    <div id="payModal" style="display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.8); display:none; align-items:center; justify-content:center; padding:20px;">
+        <div class="glass" style="max-width:420px; width:100%; max-height:90vh; overflow-y:auto;">
+            <!-- Step 1: Choose package -->
+            <div id="payStep1">
+                <div style="font-size:16px; font-weight:700; margin-bottom:16px; text-align:center;">Пополнить токены за DARAI</div>
+                <div id="payPackages"></div>
+                <button class="cab-topup" style="width:100%; margin-top:12px;" onclick="closePayModal()">Отмена</button>
+            </div>
+
+            <!-- Step 2: Payment instructions -->
+            <div id="payStep2" style="display:none;">
+                <div style="font-size:16px; font-weight:700; margin-bottom:12px; text-align:center;">Инструкция по оплате</div>
+
+                <div style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.2); border-radius:14px; padding:14px; margin-bottom:12px;">
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px;">Отправь DARAI на адрес</div>
+                    <div id="payAddress" style="font-size:14px; font-weight:700; color:var(--accent-1); margin-top:4px; word-break:break-all; font-family:monospace;"></div>
+                </div>
+
+                <div style="display:flex; gap:10px; margin-bottom:12px;">
+                    <div style="flex:1; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px;">
+                        <div style="font-size:11px; color:var(--text-secondary);">Сумма</div>
+                        <div id="payAmount" style="font-size:18px; font-weight:800; color:var(--accent-1);"></div>
+                        <div style="font-size:11px; color:var(--text-secondary);">DARAI</div>
+                    </div>
+                    <div style="flex:1; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px;">
+                        <div style="font-size:11px; color:var(--text-secondary);">Memo (обязательно!)</div>
+                        <div id="payMemo" style="font-size:18px; font-weight:800; color:#10b981; font-family:monospace;"></div>
+                        <button id="payMemoCopy" style="font-size:10px; background:var(--accent-1); color:white; border:none; border-radius:9999px; padding:3px 10px; cursor:pointer; margin-top:4px;">Скопировать</button>
+                    </div>
+                </div>
+
+                <div style="font-size:12px; color:var(--text-secondary); line-height:1.5; margin-bottom:12px;">
+                    1. Открой HOT Wallet или MyNearWallet<br>
+                    2. Отправь <b id="payAmount2"></b> DARAI на адрес выше<br>
+                    3. В поле Memo укажи код: <b id="payMemo2"></b><br>
+                    4. Нажми "Проверить оплату"
+                </div>
+
+                <button class="gen-btn" id="payCheckBtn" style="margin-top:0;">Проверить оплату</button>
+                <div id="payStatus" style="text-align:center; margin-top:8px; font-size:13px; color:var(--text-secondary);"></div>
+                <button class="cab-topup" style="width:100%; margin-top:8px;" onclick="closePayModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ═══ BOTTOM NAVIGATION ═══ -->
     <nav class="bottom-nav">
         <button class="nav-tab active" data-tab="tabGenerate">
@@ -1032,6 +1078,108 @@
             console.error("[cabinet]", e);
         }
     }
+
+    // ── DaraiPay ─────────────────────────────────────────
+    let currentPaymentId = null;
+
+    window.closePayModal = () => {
+        $("#payModal").style.display = "none";
+        $("#payStep1").style.display = "block";
+        $("#payStep2").style.display = "none";
+    };
+
+    $("#cabTopup").addEventListener("click", async () => {
+        const tgUser = tg?.initDataUnsafe?.user;
+        if (!tgUser) { alert("Войди через Telegram"); return; }
+
+        // Load packages
+        try {
+            const res = await fetch(`${API}/api/packages`);
+            const { packages, merchantAccount } = await res.json();
+
+            const box = $("#payPackages");
+            box.innerHTML = "";
+            for (const pkg of packages) {
+                const div = document.createElement("div");
+                div.style.cssText = "padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:14px; margin-bottom:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
+                div.innerHTML = `
+                    <div>
+                        <div style="font-size:14px; font-weight:700;">${pkg.label}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:16px; font-weight:800; color:var(--accent-1);">${pkg.darai}</div>
+                        <div style="font-size:10px; color:var(--text-secondary);">DARAI</div>
+                    </div>
+                `;
+                div.addEventListener("click", () => startPayment(tgUser.id, pkg.id));
+                box.appendChild(div);
+            }
+
+            $("#payModal").style.display = "flex";
+        } catch (err) {
+            alert("Ошибка загрузки пакетов");
+        }
+    });
+
+    async function startPayment(telegramId, packageId) {
+        try {
+            const res = await fetch(`${API}/api/payment/create`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ telegramId, packageId }),
+            });
+            const data = await res.json();
+
+            currentPaymentId = data.paymentId;
+            $("#payAddress").textContent = data.merchantAccount;
+            $("#payAmount").textContent = data.daraiAmount;
+            $("#payAmount2").textContent = data.daraiAmount;
+            $("#payMemo").textContent = data.memo;
+            $("#payMemo2").textContent = data.memo;
+
+            $("#payStep1").style.display = "none";
+            $("#payStep2").style.display = "block";
+            $("#payStatus").textContent = "";
+        } catch {
+            alert("Ошибка создания платежа");
+        }
+    }
+
+    $("#payMemoCopy").addEventListener("click", () => {
+        navigator.clipboard.writeText($("#payMemo").textContent);
+        $("#payMemoCopy").textContent = "Скопировано";
+        setTimeout(() => { $("#payMemoCopy").textContent = "Скопировать"; }, 2000);
+    });
+
+    $("#payCheckBtn").addEventListener("click", async () => {
+        if (!currentPaymentId) return;
+        $("#payCheckBtn").disabled = true;
+        $("#payCheckBtn").textContent = "Проверяю...";
+        $("#payStatus").textContent = "Ищу транзакцию на блокчейне...";
+
+        try {
+            const res = await fetch(`${API}/api/payment/check/${currentPaymentId}`);
+            const data = await res.json();
+
+            if (data.status === "completed") {
+                $("#payStatus").textContent = "Оплата подтверждена! Токены начислены.";
+                $("#payStatus").style.color = "#10b981";
+                $("#payCheckBtn").textContent = "Готово";
+                setTimeout(() => {
+                    closePayModal();
+                    loadCabinet(); // refresh balance
+                }, 2000);
+            } else {
+                $("#payStatus").textContent = "Платёж пока не найден. Подожди 1-2 минуты и проверь снова.";
+                $("#payStatus").style.color = "#f59e0b";
+            }
+        } catch {
+            $("#payStatus").textContent = "Ошибка проверки";
+        } finally {
+            $("#payCheckBtn").disabled = false;
+            $("#payCheckBtn").textContent = "Проверить оплату";
+        }
+    });
 
     // Referral copy
     $("#cabRefCopy").addEventListener("click", () => {
