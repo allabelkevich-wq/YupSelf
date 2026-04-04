@@ -593,8 +593,8 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
       imageUrl: result.imageUrl || null,
     });
   } catch (err) {
-    console.error("[api/edit]", err.message);
-    res.status(500).json({ error: "Edit failed" });
+    console.error("[api/edit]", err.message, err.stack?.slice(0, 200));
+    res.status(500).json({ error: "Edit failed: " + err.message });
   }
 });
 
