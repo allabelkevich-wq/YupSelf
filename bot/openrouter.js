@@ -3,14 +3,17 @@ import "dotenv/config";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LAOZHANG_API_KEY = process.env.LAOZHANG_API_KEY;
 
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const LAOZHANG_URL = "https://api.laozhang.ai/v1/chat/completions";
+const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 
 // Image models (with fallback chain)
 const IMAGE_MODEL_PRIMARY = "google/gemini-3-pro-image-preview";
 const IMAGE_MODEL_FALLBACK = "gemini-3-pro-image-preview-c";
-// Text model for prompt enhancement
-const TEXT_MODEL = "google/gemini-2.5-flash";
+// Text model for prompt enhancement — DeepSeek (smarter than Gemini Flash)
+const DEEPSEEK_MODEL = "deepseek-chat";
 
 // ── NEGATIVE PROMPT — what to NEVER generate ────────────────────────
 const NEGATIVE_PROMPT = `
@@ -72,14 +75,14 @@ export async function enhancePrompt(userText, style = "") {
     ? `Description: ${userText}\n\nApply this style deeply: ${style}`
     : userText;
 
-  const res = await fetch(OPENROUTER_URL, {
+  const res = await fetch(DEEPSEEK_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: TEXT_MODEL,
+      model: DEEPSEEK_MODEL,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMessage },
@@ -91,7 +94,7 @@ export async function enhancePrompt(userText, style = "") {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`OpenRouter text error ${res.status}: ${err}`);
+    throw new Error(`DeepSeek error ${res.status}: ${err}`);
   }
 
   const data = await res.json();
