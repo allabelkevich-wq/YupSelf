@@ -524,11 +524,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "audio file required" });
-    const text = await transcribeAudio(req.file.buffer, req.file.originalname || "voice.webm");
+    console.log("[transcribe] file:", req.file.originalname, "size:", req.file.size, "mime:", req.file.mimetype);
+    const filename = req.file.originalname || "voice.webm";
+    const text = await transcribeAudio(req.file.buffer, filename);
+    console.log("[transcribe] result:", text?.slice(0, 100));
     res.json({ text });
   } catch (err) {
     console.error("[api/transcribe]", err.message);
-    res.status(500).json({ error: "Transcription failed" });
+    res.status(500).json({ error: "Transcription failed: " + err.message });
   }
 });
 

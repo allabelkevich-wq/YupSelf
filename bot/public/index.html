@@ -734,12 +734,19 @@
 
                 $("#prompt").value = "Распознаю голос...";
                 try {
-                    const res = await fetch(`${API}/api/transcribe`, { method: "POST", body: form });
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 15000);
+                    const res = await fetch(`${API}/api/transcribe`, {
+                        method: "POST", body: form, signal: controller.signal
+                    });
+                    clearTimeout(timeout);
+                    if (!res.ok) throw new Error("Status " + res.status);
                     const data = await res.json();
                     $("#prompt").value = data.text || "";
-                } catch {
+                    if (!data.text) alert("Не удалось распознать. Попробуй говорить громче.");
+                } catch (e) {
                     $("#prompt").value = "";
-                    alert("Не удалось распознать голос");
+                    alert(e.name === "AbortError" ? "Таймаут. Попробуй ещё раз." : "Ошибка распознавания: " + e.message);
                 }
             };
 
