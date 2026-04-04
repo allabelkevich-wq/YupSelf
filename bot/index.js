@@ -81,18 +81,32 @@ const STYLES = [
   { id: "surreal", label: "Сюрреализм", eng: "surrealist art, dreamlike atmosphere, impossible geometry, Salvador Dali inspired" },
 ];
 
+// ── Web App URL ─────────────────────────────────────────────────────
+const WEBAPP_URL = process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com";
+
 // ── /start ──────────────────────────────────────────────────────────
 bot.command("start", async (ctx) => {
+  const keyboard = new InlineKeyboard()
+    .webApp("Открыть студию", WEBAPP_URL)
+    .row()
+    .text("Помощь", "cmd:help");
+
   await ctx.reply(
-    `Привет! Я YuPself — генерация AI-изображений.\n\n` +
-      `Отправь описание картинки на любом языке — я улучшу промт и сгенерирую.\n\n` +
-      `Настройки:\n` +
-      `/style — стиль (фото, аниме, масло...)\n` +
-      `/format — формат (квадрат, stories, широкий...)\n` +
-      `/size — разрешение (512px — 4K)\n` +
-      `/imagine <текст> — быстрая генерация\n` +
-      `/settings — текущие настройки\n` +
-      `/help — помощь`
+    `Привет! Я YupSelf — генерация AI-изображений.\n\n` +
+      `Напиши описание картинки — я сгенерирую прямо здесь.\n` +
+      `Или открой студию для настройки стилей, форматов и 4K.`,
+    { reply_markup: keyboard }
+  );
+});
+
+bot.callbackQuery("cmd:help", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `Просто напиши что хочешь увидеть:\n\n` +
+      `"Кот-астронавт на Луне"\n` +
+      `"Закат в стиле импрессионизма"\n\n` +
+      `/style — стиль | /format — формат | /size — разрешение\n` +
+      `/imagine <текст> — быстрая генерация`
   );
 });
 

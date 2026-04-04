@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YupSelf — AI Image Generation</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -197,6 +198,21 @@
         .gen-btn:active:not(:disabled) { transform: translateY(0); }
         .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        /* ── Counter Badge ────────────────────────────────── */
+        .counter {
+            text-align: center; margin-bottom: 20px;
+            font-size: 13px; color: var(--text-secondary);
+        }
+        .counter b { color: #a78bfa; }
+        .limit-msg {
+            display: none; margin-top: 16px; padding: 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 16px; text-align: center;
+            font-size: 14px; color: #fca5a5;
+        }
+        .limit-msg.visible { display: block; }
+
         /* ── Loading Animation ────────────────────────────── */
         .loading-wrap {
             display: none; flex-direction: column; align-items: center;
@@ -345,7 +361,9 @@
             <button class="chip" data-v="4K">4K</button>
         </div>
 
+        <div class="counter" id="counter">Генераций: <b id="genCount">0</b> из <b>3</b> бесплатных</div>
         <button class="gen-btn" id="genBtn">Сгенерировать</button>
+        <div class="limit-msg" id="limitMsg">Бесплатные генерации закончились. Скоро здесь появится оплата.</div>
 
         <!-- Loading -->
         <div class="loading-wrap" id="loading">
@@ -380,6 +398,31 @@
     const $$ = s => document.querySelectorAll(s);
     const API = window.location.origin;
 
+    // ── Telegram WebApp ──────────────────────────────────
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+        tg.ready();
+        tg.expand();
+        // Adapt theme
+        if (tg.colorScheme === "light") {
+            document.documentElement.style.setProperty("--bg", "#f0f0f5");
+            document.documentElement.style.setProperty("--text-primary", "#1e293b");
+        }
+    }
+
+    // ── Generation counter (localStorage) ────────────────
+    const FREE_LIMIT = 3;
+    let genCount = parseInt(localStorage.getItem("yupself_gens") || "0", 10);
+
+    function updateCounter() {
+        $("#genCount").textContent = genCount;
+        if (genCount >= FREE_LIMIT) {
+            $("#genBtn").disabled = true;
+            $("#limitMsg").classList.add("visible");
+        }
+    }
+    updateCounter();
+
     let imgData = null;
 
     // ── Chips ────────────────────────────────────────────
@@ -402,6 +445,7 @@
     async function generate() {
         const text = $("#prompt").value.trim();
         if (!text) { $("#prompt").focus(); return; }
+        if (genCount >= FREE_LIMIT) { $("#limitMsg").classList.add("visible"); return; }
 
         const btn = $("#genBtn");
         const loading = $("#loading");
@@ -448,6 +492,11 @@
             } else throw new Error("No image");
 
             $("#accBody").textContent = data.enhancedPrompt || text;
+
+            // Increment counter
+            genCount++;
+            localStorage.setItem("yupself_gens", String(genCount));
+            updateCounter();
 
             setTimeout(() => {
                 loading.classList.remove("visible");
