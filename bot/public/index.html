@@ -713,7 +713,13 @@
         }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRec = new MediaRecorder(stream, { mimeType: "audio/webm" });
+
+            // Pick supported MIME type (Safari = mp4, Chrome = webm)
+            const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4"
+                : "";
+            mediaRec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+            const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("webm") ? "webm" : "ogg";
             const chunks = [];
 
             mediaRec.ondataavailable = e => chunks.push(e.data);
@@ -722,9 +728,9 @@
                 vb.classList.remove("recording");
                 stream.getTracks().forEach(t => t.stop());
 
-                const blob = new Blob(chunks, { type: "audio/webm" });
+                const blob = new Blob(chunks, { type: mimeType || "audio/ogg" });
                 const form = new FormData();
-                form.append("audio", blob, "voice.webm");
+                form.append("audio", blob, `voice.${ext}`);
 
                 $("#prompt").value = "Распознаю голос...";
                 try {

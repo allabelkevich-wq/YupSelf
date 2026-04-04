@@ -383,10 +383,6 @@ bot.on("message:text", async (ctx) => {
     .text("Отмена", "gen:cancel");
 
   await ctx.reply(`Промт:\n\n${text}\n\nНажми "Сгенерировать" или "Улучшить промт" если хочешь помощь AI.`, { reply_markup: keyboard });
-  } catch (err) {
-    console.error("[enhance]", err.message);
-    await ctx.reply("Не удалось улучшить промт. Попробуй ещё раз.");
-  }
 });
 
 // ── Callbacks: confirm / redo / cancel / retry ────────────��─────────
