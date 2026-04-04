@@ -490,7 +490,7 @@
     }
 
     // ── Generation counter (localStorage) ────────────────
-    const FREE_LIMIT = 3;
+    const FREE_LIMIT = 100; // temporarily raised for testing
     let genCount = parseInt(localStorage.getItem("yupself_gens") || "0", 10);
 
     function updateCounter() {
@@ -601,8 +601,13 @@
                 });
             }
 
-            if (!res.ok) throw new Error("API error");
+            if (!res.ok) {
+                const errText = await res.text();
+                console.error("API error:", res.status, errText);
+                throw new Error("API error " + res.status);
+            }
             const data = await res.json();
+            console.log("API response keys:", Object.keys(data), "base64 len:", data.imageBase64?.length);
 
             $("#dot3").classList.add("done");
             $("#loadingText").textContent = "Готово!";
@@ -630,7 +635,8 @@
 
         } catch (err) {
             loading.classList.remove("visible");
-            alert("Не удалось сгенерировать. Попробуй другое описание.");
+            console.error("Generate error:", err);
+            alert("Не удалось сгенерировать: " + err.message);
         } finally {
             btn.disabled = false;
             btn.textContent = "Сгенерировать";
