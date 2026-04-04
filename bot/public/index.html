@@ -357,6 +357,11 @@
             <span class="ref-clear" id="refClear">Очистить</span>
         </div>
 
+        <!-- Yupik mascot button -->
+        <div style="margin-bottom:16px;">
+            <button class="chip on" id="yupikBtn" style="padding:8px 18px; font-size:13px;">Создать Юпика</button>
+        </div>
+
         <div class="examples">
             <span class="ex" data-p="Кот-астронавт на поверхности Луны">Кот-астронавт</span>
             <span class="ex" data-p="Закат над океаном в стиле масляной живописи">Закат маслом</span>
@@ -687,6 +692,19 @@
         a.click();
     });
 
+    // ── Yupik mascot ─────────────────────────────────────
+    const YUPIK_BASE = "белый маленький пушистый дракончик в шаманской мантии с большими бирюзовыми глазами лисьей мордочкой маленькими рожками чешуйчатым телом посохом с кристаллом и повязка с перьями на белом фоне";
+    $("#yupikBtn").addEventListener("click", () => {
+        const current = $("#prompt").value.trim();
+        if (current) {
+            // Append user's addition to Yupik base
+            $("#prompt").value = YUPIK_BASE + ", " + current;
+        } else {
+            $("#prompt").value = YUPIK_BASE;
+        }
+        $("#prompt").focus();
+    });
+
     // ── Style toggle ─────────────────────────────────────
     $("#styleToggle").addEventListener("click", () => {
         const b = $("#styleBody");
@@ -707,17 +725,26 @@
     let recording = false;
 
     vb.addEventListener("click", async () => {
-        if (recording) {
+        if (recording && mediaRec) {
             mediaRec.stop();
             return;
         }
+        // Reset state for new recording
+        mediaRec = null;
+        recording = false;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-            // Pick supported MIME type (Safari = mp4, Chrome = webm)
-            const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
-                : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4"
-                : "";
+            // Pick supported MIME type with explicit codecs
+            const types = [
+                "audio/webm;codecs=opus",
+                "audio/webm",
+                "audio/mp4;codecs=aac",
+                "audio/mp4",
+                "audio/ogg;codecs=opus",
+            ];
+            const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+            console.log("[voice] using MIME:", mimeType || "default");
             mediaRec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
             const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("webm") ? "webm" : "ogg";
             const chunks = [];
