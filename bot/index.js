@@ -349,12 +349,54 @@ async function doGenerate(ctx, prompt, alreadyEnhanced = false) {
 // ── Express + Webhook / Polling ─────────────────────────────────────
 const app = express();
 
+// Serve static files (web UI)
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+app.use(express.static(join(__dirname, "public")));
+
 app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+
+// ── Web API: generate image ─────────────────────────────────────────
+app.use(express.json({ limit: "1mb" }));
+
+// CORS for web UI
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (_req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
+app.post("/api/generate", async (req, res) => {
+  try {
+    const { prompt, style, aspectRatio, imageSize } = req.body;
+    if (!prompt) return res.status(400).json({ error: "prompt is required" });
+
+    // Enhance prompt via DeepSeek
+    const enhanced = await enhancePrompt(prompt, style || "");
+
+    // Generate image
+    const result = await generateImage(enhanced, {
+      aspectRatio: aspectRatio || "1:1",
+      imageSize: imageSize || "1K",
+    });
+
+    res.json({
+      enhancedPrompt: enhanced,
+      imageBase64: result.imageBase64 || null,
+      imageUrl: result.imageUrl || null,
+    });
+  } catch (err) {
+    console.error("[api/generate]", err.message);
+    res.status(500).json({ error: "Generation failed" });
+  }
+});
 
 async function main() {
   if (WEBHOOK_URL) {
     const { webhookCallback } = await import("grammy");
-    app.use(express.json());
     app.use(`/bot${BOT_TOKEN}`, webhookCallback(bot, "express"));
 
     app.listen(PORT, async () => {
