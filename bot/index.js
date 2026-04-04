@@ -290,13 +290,14 @@ async function doEdit(ctx, instruction) {
   }
 
   try {
-    const enhanced = await enhancePrompt(instruction, ctx.session.style || "");
-    const result = await editImage(enhanced, refs, {
+    // Don't enhance — pass edit instruction directly to preserve reference context
+    const editInstruction = `Edit this attached image: ${instruction}`;
+    const result = await editImage(editInstruction, refs, {
       aspectRatio: ctx.session.aspectRatio,
       imageSize: ctx.session.imageSize,
     });
 
-    ctx.session.lastPrompt = enhanced;
+    ctx.session.lastPrompt = editInstruction;
 
     const retryKeyboard = new InlineKeyboard()
       .text("Повторить", "gen:retry")
@@ -550,15 +551,17 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
     if (!req.files?.length) return res.status(400).json({ error: "at least 1 image required" });
 
     const imageBase64List = req.files.map(f => f.buffer.toString("base64"));
-    const enhanced = await enhancePrompt(prompt, req.body.style || "");
+    // Don't enhance prompt for edits — pass instruction directly
+    // DeepSeek rewrites it as "generate from scratch" and loses the reference
+    const editInstruction = `Edit this attached image according to the following instruction: ${prompt}`;
 
-    const result = await editImage(enhanced, imageBase64List, {
+    const result = await editImage(editInstruction, imageBase64List, {
       aspectRatio: req.body.aspectRatio || "1:1",
       imageSize: req.body.imageSize || "1K",
     });
 
     res.json({
-      enhancedPrompt: enhanced,
+      enhancedPrompt: editInstruction,
       imageBase64: result.imageBase64 || null,
       imageUrl: result.imageUrl || null,
     });
