@@ -820,6 +820,7 @@
                         prompt: text,
                         aspectRatio: sel("aspect"),
                         imageSize: sel("size"),
+                        telegramId: tg?.initDataUnsafe?.user?.id || null,
                     }),
                 });
                 if (!startRes.ok) throw new Error("API error " + startRes.status);

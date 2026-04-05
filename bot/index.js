@@ -559,7 +559,9 @@ app.post("/api/generate", async (req, res) => {
       setTimeout(() => reject(new Error("Generation timeout (90s)")), 90000)
     );
 
-    Promise.race([genPromise, timeoutPromise]).then(result => {
+    const telegramId = req.body.telegramId || null;
+
+    Promise.race([genPromise, timeoutPromise]).then(async (result) => {
       console.log(`[job ${jobId}] done! base64: ${(result.imageBase64||'').length} chars`);
       jobs.set(jobId, {
         status: "done",
@@ -567,6 +569,16 @@ app.post("/api/generate", async (req, res) => {
         imageBase64: result.imageBase64 || null,
         imageUrl: result.imageUrl || null,
       });
+      // Save to history
+      if (telegramId) {
+        try {
+          await saveGeneration(telegramId, {
+            prompt,
+            aspectRatio: aspectRatio || "1:1",
+            imageSize: imageSize || "1K",
+          });
+        } catch (e) { console.error("[save]", e.message); }
+      }
       setTimeout(() => jobs.delete(jobId), 300000);
     }).catch(err => {
       console.error(`[job ${jobId}] error:`, err.message);
