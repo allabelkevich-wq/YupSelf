@@ -41,6 +41,14 @@ export async function getOrCreateUser(telegramId, { username, firstName, avatarU
   // Log welcome tokens
   await logTokenTransaction(telegramId, 300, "welcome", "Приветственные токены");
 
+  // Referral bonus: both get 100 tokens
+  if (newUser.referred_by) {
+    try {
+      await addTokens(newUser.referred_by, 100, "referral", `Реферал: ${firstName || username || telegramId}`);
+      await addTokens(telegramId, 100, "referral_bonus", "Бонус за приглашение");
+    } catch (e) { console.error("[referral bonus]", e.message); }
+  }
+
   return newUser;
 }
 

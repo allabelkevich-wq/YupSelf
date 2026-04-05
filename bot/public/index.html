@@ -499,6 +499,12 @@
             <button class="chip" data-v="4K">4K</button>
         </div>
 
+        <div class="label">Качество</div>
+        <div class="chips" data-g="quality">
+            <button class="chip" data-v="fast">Быстрое (~10 сек)</button>
+            <button class="chip on" data-v="pro">Pro (~25 сек)</button>
+        </div>
+
         <div class="counter" id="counter">Генераций: <b id="genCount">0</b> из <b>100</b></div>
         <button class="gen-btn" id="genBtn" style="margin-top:8px;">Сгенерировать</button>
         <div class="limit-msg" id="limitMsg">Бесплатные генерации закончились. Скоро здесь появится оплата.</div>
@@ -519,7 +525,8 @@
             <img id="resultImg" alt="">
             <div class="result-bar">
                 <button class="rbtn accent" id="dlBtn">Скачать</button>
-                <button class="rbtn" id="retryBtn">Повторить</button>
+                <button class="rbtn" id="retryBtn">Ещё вариант</button>
+                <button class="rbtn" id="shareBtn">Поделиться</button>
                 <button class="rbtn" id="newBtn">Новое</button>
             </div>
             <div class="prompt-acc" id="accToggle">Показать промт</div>
@@ -820,6 +827,7 @@
                         prompt: text,
                         aspectRatio: sel("aspect"),
                         imageSize: sel("size"),
+                        quality: sel("quality") || "pro",
                         telegramId: tg?.initDataUnsafe?.user?.id || null,
                     }),
                 });
@@ -859,7 +867,10 @@
         } catch (err) {
             loading.classList.remove("visible");
             console.error("Generate error:", err);
-            alert("Не удалось сгенерировать: " + err.message);
+            const msg = err.message?.includes("timeout") ? "Сервер занят. Попробуй через минуту."
+                : err.message?.includes("fetch") ? "Проблема с сетью. Проверь интернет."
+                : "Не удалось сгенерировать. Попробуй другое описание."
+            alert(msg);
         } finally {
             btn.disabled = false;
             btn.textContent = "Сгенерировать";
@@ -871,12 +882,26 @@
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); }
     });
 
-    // ── Retry / New / Download ───────────────────────────
+    // ── Retry / New / Download / Share ─────────────────────
     $("#retryBtn").addEventListener("click", generate);
     $("#newBtn").addEventListener("click", () => {
         $("#prompt").value = "";
         $("#result").classList.remove("visible");
         $("#prompt").focus();
+    });
+    $("#shareBtn").addEventListener("click", async () => {
+        try {
+            if (navigator.share && imgData) {
+                const blob = await (await fetch(`data:image/png;base64,${imgData}`)).blob();
+                const file = new File([blob], "yupself.png", { type: "image/png" });
+                await navigator.share({ files: [file], title: "YupSelf", text: "Сгенерировано в YupSelf" });
+            } else if (tg) {
+                tg.switchInlineQuery("Смотри что я сгенерировал в YupSelf!", ["users"]);
+            } else {
+                navigator.clipboard.writeText("https://t.me/YupSelf_bot");
+                alert("Ссылка скопирована!");
+            }
+        } catch { alert("Поделиться: https://t.me/YupSelf_bot"); }
     });
     let currentJobId = null;
     $("#dlBtn").addEventListener("click", () => {

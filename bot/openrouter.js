@@ -9,8 +9,9 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const LAOZHANG_URL = "https://api.laozhang.ai/v1/chat/completions";
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 
-// Image models (with fallback chain)
-const IMAGE_MODEL_PRIMARY = "google/gemini-3-pro-image-preview";
+// Image models
+const IMAGE_MODEL_PRO = "google/gemini-3-pro-image-preview";
+const IMAGE_MODEL_FLASH = "google/gemini-2.5-flash-image";
 const IMAGE_MODEL_FALLBACK = "gemini-3-pro-image-preview-c";
 // Text model for prompt enhancement — DeepSeek (smarter than Gemini Flash)
 const DEEPSEEK_MODEL = "deepseek-chat";
@@ -119,9 +120,10 @@ export async function enhancePrompt(userText, style = "") {
 }
 
 /**
- * Generate image with fallback chain: OpenRouter → laozhang.ai
+ * Generate image with fallback chain.
  * @param {string} prompt
- * @param {{ aspectRatio?: string, imageSize?: string }} imageConfig
+ * @param {{ aspectRatio?: string, imageSize?: string, quality?: string }} imageConfig
+ * quality: "fast" = Flash (5-10s), "pro" = Pro (15-30s, default)
  */
 export async function generateImage(prompt, imageConfig = {}) {
   const config = {
@@ -129,12 +131,14 @@ export async function generateImage(prompt, imageConfig = {}) {
     image_size: imageConfig.imageSize || "1K",
   };
 
-  // Attempt 1: OpenRouter (Gemini 3 Pro Image)
+  const model = imageConfig.quality === "fast" ? IMAGE_MODEL_FLASH : IMAGE_MODEL_PRO;
+
+  // Attempt 1: OpenRouter
   try {
     const result = await _callImageApi(
       OPENROUTER_URL,
       OPENROUTER_API_KEY,
-      IMAGE_MODEL_PRIMARY,
+      model,
       prompt,
       config
     );

@@ -87,8 +87,26 @@ const STYLES = [
 // ── Web App URL ─────────────────────────────────────────────────────
 const WEBAPP_URL = process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com";
 
-// ── /start ──────────────────────────────────────────────────────────
+// ── /start (with referral support) ──────────────────────────────────
 bot.command("start", async (ctx) => {
+  const payload = ctx.match || "";
+  const referralCode = payload.startsWith("ref_") ? payload.slice(4) : null;
+
+  // Register/get user
+  const tgUser = ctx.from;
+  try {
+    await getOrCreateUser(tgUser.id, {
+      username: tgUser.username,
+      firstName: tgUser.first_name,
+      referralCode,
+    });
+    if (referralCode) {
+      console.log(`[referral] ${tgUser.id} joined via ${referralCode}`);
+    }
+  } catch (err) {
+    console.error("[start/auth]", err.message);
+  }
+
   const keyboard = new InlineKeyboard()
     .webApp("Открыть студию", WEBAPP_URL)
     .row()
@@ -542,18 +560,18 @@ const jobs = new Map();
 
 app.post("/api/generate", async (req, res) => {
   try {
-    const { prompt, style, aspectRatio, imageSize } = req.body;
+    const { prompt, style, aspectRatio, imageSize, quality } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
 
     // Create job and return immediately
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     jobs.set(jobId, { status: "processing", prompt });
 
-    // Generate directly from user's prompt
-    console.log(`[job ${jobId}] generating: "${prompt.slice(0, 80)}..."`);
+    console.log(`[job ${jobId}] generating (${quality || "pro"}): "${prompt.slice(0, 80)}..."`);
     const genPromise = generateImage(prompt, {
       aspectRatio: aspectRatio || "1:1",
       imageSize: imageSize || "1K",
+      quality: quality || "pro",
     });
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("Generation timeout (90s)")), 90000)
