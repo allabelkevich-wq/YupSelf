@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
-import { enhancePrompt, generateImage, editImage } from "./openrouter.js";
+import { enhancePrompt, translatePrompt, generateImage, editImage } from "./openrouter.js";
 import { transcribeAudio } from "./groq.js";
 import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
@@ -549,9 +549,13 @@ app.post("/api/generate", async (req, res) => {
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     jobs.set(jobId, { status: "processing", prompt });
 
+    // Translate prompt to English (Gemini works much better with English)
+    console.log(`[job ${jobId}] translating: "${prompt.slice(0, 50)}..."`);
+    const translated = await translatePrompt(prompt);
+    console.log(`[job ${jobId}] translated: "${translated.slice(0, 80)}..."`);
+
     // Start generation in background with timeout
-    console.log(`[job ${jobId}] starting generation: "${prompt.slice(0, 50)}..."`);
-    const genPromise = generateImage(prompt, {
+    const genPromise = generateImage(translated, {
       aspectRatio: aspectRatio || "1:1",
       imageSize: imageSize || "1K",
     });
@@ -563,7 +567,8 @@ app.post("/api/generate", async (req, res) => {
       console.log(`[job ${jobId}] done! base64: ${(result.imageBase64||'').length} chars`);
       jobs.set(jobId, {
         status: "done",
-        prompt,
+        prompt: translated,
+        originalPrompt: prompt,
         imageBase64: result.imageBase64 || null,
         imageUrl: result.imageUrl || null,
       });

@@ -32,47 +32,64 @@ NEGATIVE PROMPT (absolutely avoid in the generated image):
 - No text on image UNLESS user explicitly requested text/title/caption
 `.trim();
 
-// ── QUALITY SYSTEM PROMPT — expert prompt engineer ──────────────────
-const SYSTEM_PROMPT = `You are an elite visual prompt architect — not a generic AI assistant.
-Your mission: transform ANY user description into a cinematic, editorial-grade image prompt.
+// ── LIGHT TRANSLATE PROMPT — just translate + add quality markers ────
+const TRANSLATE_PROMPT = `Translate the user's image description to English.
+Keep the EXACT same idea — do NOT change, rewrite or "improve" the concept.
+Just translate accurately and add "high quality, detailed" at the end.
+If the text is already in English — return it as-is.
+If user asks for text on image — preserve the exact text in quotes.
+Return ONLY the translated prompt, nothing else.`;
 
-## YOUR APPROACH:
-1. TRANSLATE to English if the input is in another language
-2. IDENTIFY the core visual concept — what makes this image unique, not generic
-3. CRAFT a detailed prompt (3-6 sentences) with these mandatory layers:
-   - SUBJECT: precise, specific, with personality or story
-   - COMPOSITION: camera angle, framing, depth of field, focal point
-   - LIGHTING: volumetric, directional, color temperature, shadows
-   - ATMOSPHERE: mood, texture, environment details
-   - TECHNIQUE: photographic or artistic technique reference (not artist names)
-4. APPLY the requested style (if any), deeply integrated — not just appended
-5. INJECT the negative prompt at the end
-
-## QUALITY RULES:
-- Every prompt must feel like a brief to a $10,000/day photographer or concept artist
-- Specificity > generality: "warm amber side-light at golden hour" NOT "nice lighting"
-- Unique perspective > cliche: "low angle through rain-covered glass" NOT "beautiful view"
-- Emotional resonance: every image should evoke a feeling, not just depict a scene
-- Reference 2026 visual trends: editorial minimalism, volumetric atmospherics, raw textures
-- If the user's idea is vague, make a bold creative choice — don't play it safe
-
-## ABSOLUTE PROHIBITIONS:
-- Never produce a prompt that could result in a stock photo
-- Never use generic phrases: "beautiful", "stunning", "amazing", "breathtaking"
-- Never reference specific artists by name (copyright issues)
-- If user asks for text/typography/title on the image — ALWAYS preserve that request in the prompt. Specify exact text in quotes.
-- If user sends a long article/text — extract the KEY IDEA and create a visual metaphor for it, not a literal illustration
-
-## OUTPUT FORMAT:
-Return ONLY the final prompt text. No quotes, no explanations, no preamble.
-End with the negative prompt section.`;
+// ── FULL ENHANCE PROMPT — for when user explicitly asks for enhancement ──
+const ENHANCE_PROMPT = `You are an image prompt engineer.
+The user gives you a description. Your job:
+1. Translate to English if needed
+2. Add 1-2 sentences of visual detail (lighting, composition, mood)
+3. Keep the user's original idea intact — do NOT replace it
+4. If user asks for text on image — preserve exact text in quotes
+Return ONLY the final prompt. No quotes, no explanations.`;
 
 /**
- * Enhance a user's image prompt — full creative rewrite with anti-cliche system.
+ * Light translation — just translate to English, keep the idea.
+ * Used automatically before every generation.
+ */
+export async function translatePrompt(userText) {
+  // Skip if already English
+  if (/^[a-zA-Z0-9\s.,!?'"()\-:;]+$/.test(userText)) return userText;
+
+  try {
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: TRANSLATE_PROMPT },
+          { role: "user", content: userText },
+        ],
+        max_tokens: 300,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!res.ok) return userText; // fallback to original
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || userText;
+  } catch {
+    return userText; // fallback
+  }
+}
+
+/**
+ * Full enhancement — translate + add visual details.
+ * Used only when user explicitly asks.
  */
 export async function enhancePrompt(userText, style = "") {
   const userMessage = style
-    ? `Description: ${userText}\n\nApply this style deeply: ${style}`
+    ? `Description: ${userText}\n\nApply this style: ${style}`
     : userText;
 
   const res = await fetch(DEEPSEEK_URL, {
@@ -84,11 +101,11 @@ export async function enhancePrompt(userText, style = "") {
     body: JSON.stringify({
       model: DEEPSEEK_MODEL,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: ENHANCE_PROMPT },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 600,
-      temperature: 0.85,
+      max_tokens: 400,
+      temperature: 0.7,
     }),
   });
 
@@ -98,14 +115,7 @@ export async function enhancePrompt(userText, style = "") {
   }
 
   const data = await res.json();
-  let enhanced = data.choices?.[0]?.message?.content?.trim() || userText;
-
-  // Ensure negative prompt is included
-  if (!enhanced.toLowerCase().includes("negative prompt")) {
-    enhanced += "\n\n" + NEGATIVE_PROMPT;
-  }
-
-  return enhanced;
+  return data.choices?.[0]?.message?.content?.trim() || userText;
 }
 
 /**
