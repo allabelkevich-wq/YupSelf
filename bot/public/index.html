@@ -768,6 +768,27 @@
         renderRefPreviews();
     });
 
+    // Compress image to max 1024x1024 JPEG (Gemini works best with this)
+    async function compressImage(file, maxSize = 1024) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement("canvas");
+                let w = img.width, h = img.height;
+                if (w > maxSize || h > maxSize) {
+                    const ratio = Math.min(maxSize / w, maxSize / h);
+                    w = Math.round(w * ratio);
+                    h = Math.round(h * ratio);
+                }
+                canvas.width = w;
+                canvas.height = h;
+                canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+                canvas.toBlob(blob => resolve(new File([blob], file.name, { type: "image/jpeg" })), "image/jpeg", 0.85);
+            };
+            img.src = URL.createObjectURL(file);
+        });
+    }
+
     function renderRefPreviews() {
         const box = $("#refPreviews");
         box.innerHTML = "";
@@ -851,7 +872,11 @@
                 form.append("prompt", text);
                 form.append("aspectRatio", sel("aspect"));
                 form.append("imageSize", sel("size"));
-                for (const f of refFiles) form.append("images", f);
+                // Compress images before sending (Gemini works best with 1024x1024 JPEG)
+                for (const f of refFiles) {
+                    const compressed = await compressImage(f);
+                    form.append("images", compressed);
+                }
                 try {
                     const res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
                     if (!res.ok) {
