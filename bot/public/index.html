@@ -904,10 +904,7 @@
         } catch (err) {
             loading.classList.remove("visible");
             console.error("Generate error:", err);
-            const msg = err.message?.includes("timeout") ? "Сервер занят. Попробуй через минуту."
-                : err.message?.includes("fetch") ? "Проблема с сетью. Проверь интернет."
-                : "Не удалось сгенерировать. Попробуй другое описание."
-            alert(msg);
+            alert("Ошибка: " + (err.message || err) + "\n\nОтправь этот текст разработчику.");
         } finally {
             btn.disabled = false;
             btn.textContent = "Сгенерировать";
