@@ -575,7 +575,7 @@ app.post("/api/generate", async (req, res) => {
       quality: quality || "pro",
     });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Generation timeout (90s)")), 90000)
+      setTimeout(() => reject(new Error("Generation timeout (120s)")), 120000)
     );
 
     const telegramId = req.body.telegramId || null;

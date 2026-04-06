@@ -788,15 +788,26 @@
 
     // ── Poll job result ───────────────────────────────────
     async function pollJob(jobId) {
+        let failures = 0;
         for (let i = 0; i < 60; i++) { // max 3 minutes
             await new Promise(r => setTimeout(r, 3000));
-            const res = await fetch(`${API}/api/job/${jobId}`);
-            if (!res.ok) throw new Error("Poll error " + res.status);
-            const job = await res.json();
-            if (job.status === "done") return job;
-            if (job.status === "error") throw new Error(job.error || "Generation failed");
+            try {
+                const res = await fetch(`${API}/api/job/${jobId}`);
+                if (!res.ok) { failures++; if (failures > 3) throw new Error("Server error"); continue; }
+                failures = 0;
+                const job = await res.json();
+                if (job.status === "done") return job;
+                if (job.status === "error") throw new Error(job.error || "Generation failed");
+                // Update loading text with timer
+                const sec = (i + 1) * 3;
+                if (sec > 15) $("#loadingText").textContent = `Генерирую... ${sec} сек`;
+            } catch (e) {
+                if (e.message === "Generation failed" || e.message === "Server error") throw e;
+                failures++;
+                if (failures > 5) throw new Error("Потеряно соединение");
+            }
         }
-        throw new Error("Таймаут генерации");
+        throw new Error("timeout");
     }
 
     // ── Generate ─────────────────────────────────────────
