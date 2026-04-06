@@ -846,15 +846,40 @@
 
             let data;
             if (refFiles.length > 0) {
-                // Edit mode — direct (no polling needed, usually fast)
+                // Edit mode — also async to avoid timeout
                 const form = new FormData();
                 form.append("prompt", text);
                 form.append("aspectRatio", sel("aspect"));
                 form.append("imageSize", sel("size"));
                 for (const f of refFiles) form.append("images", f);
-                const res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
-                if (!res.ok) throw new Error("Edit error " + res.status);
-                data = await res.json();
+                try {
+                    const res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                    if (!res.ok) {
+                        const errData = await res.json().catch(() => ({}));
+                        throw new Error(errData.error || "Edit error");
+                    }
+                    data = await res.json();
+                } catch (editErr) {
+                    // Fallback: clear refs and try normal generation
+                    console.warn("Edit failed, trying normal gen:", editErr.message);
+                    refFiles = [];
+                    renderRefPreviews();
+                    const startRes = await fetch(`${API}/api/generate`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            prompt: text,
+                            aspectRatio: sel("aspect"),
+                            imageSize: sel("size"),
+                            quality: sel("quality") || "pro",
+                            telegramId: tg?.initDataUnsafe?.user?.id || null,
+                        }),
+                    });
+                    if (!startRes.ok) throw editErr; // re-throw original
+                    const { jobId } = await startRes.json();
+                    if (jobId) { currentJobId = jobId; data = await pollJob(jobId); }
+                    else throw editErr;
+                }
             } else {
                 // Generate mode — async with polling
                 const startRes = await fetch(`${API}/api/generate`, {

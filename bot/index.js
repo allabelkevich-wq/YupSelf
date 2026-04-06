@@ -719,17 +719,27 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
     if (!req.files?.length) return res.status(400).json({ error: "at least 1 image required" });
 
     const imageBase64List = req.files.map(f => f.buffer.toString("base64"));
-    // Don't enhance prompt for edits — pass instruction directly
-    // DeepSeek rewrites it as "generate from scratch" and loses the reference
+    console.log("[edit] images:", req.files.length, "sizes:", req.files.map(f => f.size), "prompt:", prompt.slice(0, 50));
+
     const editInstruction = `Edit this attached image according to the following instruction: ${prompt}`;
 
-    const result = await editImage(editInstruction, imageBase64List, {
-      aspectRatio: req.body.aspectRatio || "1:1",
-      imageSize: req.body.imageSize || "1K",
-    });
+    let result;
+    try {
+      result = await editImage(editInstruction, imageBase64List, {
+        aspectRatio: req.body.aspectRatio || "1:1",
+        imageSize: req.body.imageSize || "1K",
+      });
+    } catch (editErr) {
+      // Fallback: if edit fails, try regular generation with the prompt
+      console.warn("[edit] editImage failed, falling back to generate:", editErr.message);
+      result = await generateImage(prompt, {
+        aspectRatio: req.body.aspectRatio || "1:1",
+        imageSize: req.body.imageSize || "1K",
+      });
+    }
 
     res.json({
-      enhancedPrompt: editInstruction,
+      enhancedPrompt: prompt,
       imageBase64: result.imageBase64 || null,
       imageUrl: result.imageUrl || null,
     });
