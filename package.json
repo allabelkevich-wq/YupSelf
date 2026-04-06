@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.101.1",
     "dotenv": "^16.4.0",
     "express": "^5.0.0",
+    "form-data": "^4.0.5",
     "grammy": "^1.28.0",
     "multer": "^2.1.1"
   }

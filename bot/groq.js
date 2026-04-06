@@ -5,39 +5,41 @@ const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 
 /**
  * Transcribe audio buffer using Groq Whisper.
- * @param {Buffer} audioBuffer — OGG/MP3/WAV file buffer
+ * Uses whisper-large-v3-turbo (faster) — same as DreamWorker.
+ *
+ * @param {Buffer} audioBuffer — audio file buffer
  * @param {string} filename — e.g. "voice.ogg"
+ * @param {string} mimetype — e.g. "audio/webm"
  * @returns {string} transcribed text
  */
-export async function transcribeAudio(audioBuffer, filename = "voice.ogg") {
+export async function transcribeAudio(audioBuffer, filename = "voice.webm", mimetype = "audio/webm") {
   if (!GROQ_API_KEY) {
     throw new Error("GROQ_API_KEY not configured");
   }
 
-  // Determine MIME type from filename
-  const ext = filename.split(".").pop()?.toLowerCase() || "ogg";
-  const mimeMap = { ogg: "audio/ogg", oga: "audio/ogg", mp3: "audio/mpeg", wav: "audio/wav", webm: "audio/webm", m4a: "audio/mp4" };
-  const mime = mimeMap[ext] || "audio/ogg";
+  console.log("[groq] transcribing:", filename, "size:", audioBuffer.length, "mime:", mimetype);
 
-  const formData = new FormData();
-  formData.append("file", new File([audioBuffer], filename, { type: mime }));
-  formData.append("model", "whisper-large-v3");
-  formData.append("language", "ru");
-  formData.append("response_format", "text");
+  const form = new FormData();
+  form.append("file", new File([audioBuffer], filename, { type: mimetype }));
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("language", "ru");
+  form.append("response_format", "json");
 
   const res = await fetch(GROQ_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${GROQ_API_KEY}`,
     },
-    body: formData,
+    body: form,
   });
 
   if (!res.ok) {
     const err = await res.text();
+    console.error("[groq] error:", res.status, err);
     throw new Error(`Groq Whisper error ${res.status}: ${err}`);
   }
 
-  const text = await res.text();
-  return text.trim();
+  const data = await res.json();
+  console.log("[groq] result:", (data.text || "").slice(0, 80));
+  return (data.text || "").trim();
 }

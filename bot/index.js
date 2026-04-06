@@ -358,7 +358,7 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
 
     // Telegram voice = .oga (Opus), rename to .ogg for Groq compatibility
     const filename = (file.file_path || "voice.oga").replace(/\.oga$/, ".ogg");
-    const text = await transcribeAudio(buffer, filename);
+    const text = await transcribeAudio(buffer, filename, "audio/ogg");
 
     if (!text) {
       return ctx.reply("Не удалось распознать речь. Попробуй ещё раз.");
@@ -546,7 +546,8 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "audio file required" });
     console.log("[transcribe] file:", req.file.originalname, "size:", req.file.size, "mime:", req.file.mimetype);
     const filename = req.file.originalname || "voice.webm";
-    const text = await transcribeAudio(req.file.buffer, filename);
+    const mimetype = req.file.mimetype || "audio/webm";
+    const text = await transcribeAudio(req.file.buffer, filename, mimetype);
     console.log("[transcribe] result:", text?.slice(0, 100));
     res.json({ text });
   } catch (err) {
