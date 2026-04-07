@@ -18,8 +18,5 @@
     "form-data": "^4.0.5",
     "grammy": "^1.28.0",
     "multer": "^2.1.1"
-  },
-  "optionalDependencies": {
-    "swisseph": "^0.5.17"
   }
 }
