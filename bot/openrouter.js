@@ -243,6 +243,7 @@ async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
   const body = {
     model,
     messages: [{ role: "user", content: prompt }],
+    max_tokens: 8192, // Limit tokens to avoid 402 credit errors
   };
 
   // Add image_config for aspect ratio and size
