@@ -524,14 +524,15 @@ const app = express();
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// Force no-cache headers on all static files
-app.use((req, res, next) => {
-  if (req.path === "/" || req.path.endsWith(".html")) {
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-    res.setHeader("Surrogate-Control", "no-store");
+// Force cache bust: redirect / to /?v=BUILD_TS
+const BUILD_TS = Date.now();
+app.get("/", (req, res, next) => {
+  if (!req.query.v || req.query.v !== String(BUILD_TS)) {
+    return res.redirect(302, `/?v=${BUILD_TS}`);
   }
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   next();
 });
 app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false, lastModified: false }));
