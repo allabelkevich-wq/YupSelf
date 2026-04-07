@@ -809,6 +809,15 @@
 </div>
 
 <script>
+// Global error handler — catch ANY unhandled error
+window.onerror = (msg, src, line, col, err) => {
+    alert("JS Error: " + msg + "\nLine: " + line + "\nCol: " + col);
+    return true;
+};
+window.addEventListener("unhandledrejection", e => {
+    alert("Promise Error: " + (e.reason?.message || e.reason || "unknown"));
+});
+
 (function() {
     const $ = s => document.querySelector(s);
     const $$ = s => document.querySelectorAll(s);
