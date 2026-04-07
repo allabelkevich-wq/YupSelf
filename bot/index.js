@@ -3,7 +3,7 @@ import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
 import { enhancePrompt, translatePrompt, generateImage, editImage } from "./openrouter.js";
 import { transcribeAudio } from "./groq.js";
-import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
+import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite, uploadImage } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
@@ -599,14 +599,17 @@ app.post("/api/generate", async (req, res) => {
         imageBase64: result.imageBase64 || null,
         imageUrl: result.imageUrl || null,
       });
-      // Save to history
+      // Upload image + save to history
       if (telegramId) {
         try {
+          const imageUrl = await uploadImage(result.imageBase64, `${jobId}.png`);
           await saveGeneration(telegramId, {
             prompt,
             aspectRatio: aspectRatio || "1:1",
             imageSize: imageSize || "1K",
+            imageUrl,
           });
+          console.log(`[job ${jobId}] saved to history, url: ${imageUrl ? "yes" : "no"}`);
         } catch (e) { console.error("[save]", e.message); }
       }
       setTimeout(() => jobs.delete(jobId), 300000);

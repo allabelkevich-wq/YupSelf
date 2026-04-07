@@ -120,6 +120,38 @@ async function logTokenTransaction(telegramId, amount, type, description) {
   });
 }
 
+// ── Image Storage ───────────────────────────────────────────────────
+
+/**
+ * Upload base64 image to Supabase Storage and return public URL.
+ */
+export async function uploadImage(imageBase64, filename) {
+  if (!imageBase64) return null;
+
+  try {
+    // Ensure bucket exists
+    const { data: buckets } = await supabase.storage.listBuckets();
+    if (!buckets?.find(b => b.name === "images")) {
+      await supabase.storage.createBucket("images", { public: true });
+    }
+
+    const buf = Buffer.from(imageBase64, "base64");
+    const path = `gen/${filename || Date.now() + ".png"}`;
+
+    const { error } = await supabase.storage
+      .from("images")
+      .upload(path, buf, { contentType: "image/png", upsert: true });
+
+    if (error) { console.error("[upload]", error.message); return null; }
+
+    const { data: urlData } = supabase.storage.from("images").getPublicUrl(path);
+    return urlData?.publicUrl || null;
+  } catch (e) {
+    console.error("[upload]", e.message);
+    return null;
+  }
+}
+
 // ── Generation history ──────────────────────────────────────────────
 
 export async function saveGeneration(telegramId, { prompt, enhancedPrompt, style, aspectRatio, imageSize, imageUrl, refImagesCount, isEdit }) {
