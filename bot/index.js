@@ -539,7 +539,7 @@ app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false, last
 app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
 
 // ── Web API: generate image ─────────────────────────────────────────
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "5mb" }));
 
 // CORS for web UI
 app.use("/api", (_req, res, next) => {
@@ -759,18 +759,18 @@ app.get("/api/payment/pending/:telegramId", async (req, res) => {
 // ── Astro Image Generation API ───────────────────────────────────────
 app.post("/api/astro/generate", async (req, res) => {
   try {
-    const { name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, intention, faceId, telegramId, aspectRatio } = req.body;
-    console.log("[astro] request:", JSON.stringify({ name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, faceId, aspectRatio }));
+    const { name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, intention, faceBase64, faceId, telegramId, aspectRatio } = req.body;
+    console.log("[astro] request:", JSON.stringify({ name, birthdate, birthplace, birthtime, gender, hasFace: !!(faceBase64 || faceId) }));
     if (!birthdate || !birthplace) return res.status(400).json({ error: "birthdate and birthplace required" });
 
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     jobs.set(jobId, { status: "processing", type: "astro" });
 
-    console.log(`[astro job ${jobId}] starting for ${name}, ${birthdate}, ${birthplace}`);
+    console.log(`[astro job ${jobId}] starting for ${name}, ${birthdate}, ${birthplace}, face: ${!!(faceBase64 || faceId)}`);
 
-    // Get face image if faceId provided
-    let faceImageB64 = null;
-    if (faceId && telegramId) {
+    // Get face image: direct base64 OR from saved face
+    let faceImageB64 = faceBase64 || null;
+    if (!faceImageB64 && faceId && telegramId) {
       try {
         const face = await getFaceImage(Number(faceId), Number(telegramId));
         if (face?.face_image_b64) faceImageB64 = face.face_image_b64;

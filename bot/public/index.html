@@ -1618,21 +1618,17 @@ window.addEventListener("unhandledrejection", function(e) {
         $("#astroLoading").classList.add("visible");
         $("#astroLoadingText").textContent = "Рассчитываю натальную карту...";
 
-        // Save face if uploaded
-        let faceId = null;
-        if (astroFaceFile && faceCheck.checked && activeFaceId) {
-            faceId = activeFaceId;
-        } else if (astroFaceFile && tg?.initDataUnsafe?.user) {
+        // Compress face photo to base64 if uploaded
+        let faceBase64 = null;
+        if (astroFaceFile) {
             try {
-                const compressed = await compressImage(astroFaceFile, 512);
-                const form = new FormData();
-                form.append("face", compressed);
-                form.append("telegramId", String(tg.initDataUnsafe.user.id));
-                form.append("name", $("#astroName").value || "Астро");
-                const fRes = await fetch(`${API}/api/face/save`, { method: "POST", body: form });
-                const fData = await fRes.json();
-                if (fData.id) faceId = fData.id;
-            } catch {}
+                const compressed = await compressImage(astroFaceFile, 1024);
+                const reader = new FileReader();
+                faceBase64 = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result.split(",")[1]); // strip data:... prefix
+                    reader.readAsDataURL(compressed);
+                });
+            } catch (e) { console.error("Face compress:", e); }
         }
 
         try {
@@ -1647,7 +1643,7 @@ window.addEventListener("unhandledrejection", function(e) {
                 birthtimeUnknown: $("#astroTimeUnknown").checked,
                 gender: $("#astroGender").value,
                 intention: $("#astroIntention").value,
-                faceId,
+                faceBase64,
                 telegramId: tg?.initDataUnsafe?.user?.id || null,
                 aspectRatio: sel("aspect") || "1:1",
             });
