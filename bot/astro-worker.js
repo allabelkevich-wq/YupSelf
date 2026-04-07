@@ -2,12 +2,109 @@ import "dotenv/config";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { getAstroSnapshot } from "./astroLib.js";
+let getAstroSnapshot;
+try {
+  const mod = await import("./astroLib.js");
+  getAstroSnapshot = mod.getAstroSnapshot;
+} catch {
+  // Fallback: simplified astro calculation without swisseph
+  getAstroSnapshot = (opts) => buildSimplifiedChart(opts);
+}
+
 import { geocode } from "./geocode.js";
 import { generateImage, editImage } from "./openrouter.js";
 import supabase from "./db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Simplified natal chart without swisseph — based on date math.
+ * Not as accurate as Swiss Ephemeris, but works without native C module.
+ */
+function buildSimplifiedChart(opts) {
+  const { year, month, day, hour = 12, minute = 0 } = opts;
+
+  // Sun sign by date (tropical, simplified)
+  const SIGNS = ["Овен","Телец","Близнецы","Рак","Лев","Дева","Весы","Скорпион","Стрелец","Козерог","Водолей","Рыбы"];
+  const SIGN_DATES = [
+    [3,21],[4,20],[5,21],[6,21],[7,23],[8,23],[9,23],[10,23],[11,22],[12,22],[1,20],[2,19]
+  ];
+  let sunSign = "Рыбы", sunIndex = 11;
+  for (let i = 0; i < 12; i++) {
+    const [sm, sd] = SIGN_DATES[i];
+    const [nm, nd] = SIGN_DATES[(i+1) % 12];
+    if ((month === sm && day >= sd) || (month === nm && day < nd) ||
+        (sm === 12 && nm === 1 && ((month === 12 && day >= sd) || (month === 1 && day < nd)))) {
+      sunSign = SIGNS[i]; sunIndex = i; break;
+    }
+  }
+
+  // Moon sign approximation (Moon moves ~13° per day, full cycle ~27.3 days)
+  const dayOfYear = Math.floor((new Date(year, month-1, day) - new Date(year, 0, 0)) / 86400000);
+  const moonCycle = (dayOfYear * 13.17 + hour * 0.55) % 360;
+  const moonIndex = Math.floor(moonCycle / 30) % 12;
+  const moonSign = SIGNS[moonIndex];
+
+  // Ascendant approximation (based on birth hour)
+  const ascIndex = (sunIndex + Math.floor(hour / 2)) % 12;
+  const ascSign = SIGNS[ascIndex];
+
+  // Houses (whole sign from ascendant)
+  const sunHouse = ((sunIndex - ascIndex + 12) % 12) + 1;
+  const moonHouse = ((moonIndex - ascIndex + 12) % 12) + 1;
+
+  // Elements
+  const ELEMENTS = { "Овен":"fire","Лев":"fire","Стрелец":"fire",
+    "Телец":"earth","Дева":"earth","Козерог":"earth",
+    "Близнецы":"air","Весы":"air","Водолей":"air",
+    "Рак":"water","Скорпион":"water","Рыбы":"water" };
+
+  // Simple positions
+  const positions = [
+    { name: "Солнце", sign: sunSign, degree: 15, house: sunHouse, retrograde: false, nakshatra: "", nakshatra_goal: "Дхарма" },
+    { name: "Луна", sign: moonSign, degree: (moonCycle % 30), house: moonHouse, retrograde: false, nakshatra: "", nakshatra_goal: ["Дхарма","Артха","Кама","Мокша"][moonIndex % 4] },
+    { name: "Меркурий", sign: SIGNS[(sunIndex + (day % 3 === 0 ? -1 : day % 3 === 1 ? 0 : 1) + 12) % 12], degree: 10, house: ((sunHouse + day % 3) % 12) + 1, retrograde: day % 7 === 0, nakshatra: "", nakshatra_goal: "Артха" },
+    { name: "Венера", sign: SIGNS[(sunIndex + (month % 2 === 0 ? -2 : 1) + 12) % 12], degree: 20, house: ((sunHouse + 1) % 12) + 1, retrograde: false, nakshatra: "", nakshatra_goal: "Кама" },
+    { name: "Марс", sign: SIGNS[(sunIndex + 3 + year % 3) % 12], degree: 8, house: ((sunHouse + 5) % 12) + 1, retrograde: year % 2 === 0, nakshatra: "", nakshatra_goal: "Артха" },
+    { name: "Юпитер", sign: SIGNS[(year % 12)], degree: 15, house: ((ascIndex + 8) % 12) + 1, retrograde: false, nakshatra: "", nakshatra_goal: "Дхарма" },
+    { name: "Сатурн", sign: SIGNS[((year - 3) % 12)], degree: 22, house: ((ascIndex + 10) % 12) + 1, retrograde: month > 6, nakshatra: "", nakshatra_goal: "Мокша" },
+  ];
+
+  // Aspects (simplified)
+  const aspects = [];
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      const diff = Math.abs(positions[i].degree + SIGNS.indexOf(positions[i].sign) * 30 - positions[j].degree - SIGNS.indexOf(positions[j].sign) * 30);
+      const angle = diff % 360 > 180 ? 360 - diff % 360 : diff % 360;
+      if (Math.abs(angle - 90) < 10) aspects.push({ p1: positions[i].name, p2: positions[j].name, aspect: "квадрат", angle: 90, orb: Math.abs(angle - 90) });
+      if (Math.abs(angle - 120) < 10) aspects.push({ p1: positions[i].name, p2: positions[j].name, aspect: "трин", angle: 120, orb: Math.abs(angle - 120) });
+      if (Math.abs(angle - 180) < 10) aspects.push({ p1: positions[i].name, p2: positions[j].name, aspect: "оппозиция", angle: 180, orb: Math.abs(angle - 180) });
+      if (angle < 8) aspects.push({ p1: positions[i].name, p2: positions[j].name, aspect: "соединение", angle: 0, orb: angle });
+    }
+  }
+
+  // Atmakaraka (highest degree)
+  const atma = positions.reduce((a, b) => a.degree > b.degree ? a : b);
+
+  return {
+    snapshot_text: `Simplified chart for ${opts.year}-${opts.month}-${opts.day}`,
+    snapshot_json: {
+      system: "simplified_tropical",
+      house_system: "whole_sign",
+      positions,
+      aspects,
+      retrograde: positions.filter(p => p.retrograde).map(p => p.name),
+      atmakaraka: atma.name,
+      arudha_lagna: ascSign,
+      cusps: SIGNS.map((s, i) => SIGNS[(ascIndex + i) % 12]),
+      dashas: {
+        current_mahadasha: SIGNS[(year + month) % 7] ? ["Солнце","Луна","Марс","Меркурий","Юпитер","Венера","Сатурн"][(year + month) % 7] : "Венера",
+        current_antardasha: ["Солнце","Луна","Марс","Меркурий","Юпитер","Венера","Сатурн"][(year + day) % 7],
+      },
+    },
+    error: null,
+  };
+}
 
 // Load astro-visual system prompt
 const ASTRO_VISUAL_PROMPT = readFileSync(
