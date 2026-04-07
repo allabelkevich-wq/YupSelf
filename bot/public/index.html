@@ -1602,6 +1602,7 @@ window.addEventListener("unhandledrejection", function(e) {
     $("#astroGenBtn").addEventListener("click", async () => {
         const day = dayS.value, month = monthS.value, year = yearS.value;
         const place = $("#astroPlace").value.trim();
+        if (!astroFaceFile) { alert("Загрузи своё фото — без него генерация невозможна. Лицо должно быть чётко видно."); return; }
         if (!day || !month || !year) { alert("Укажи дату рождения"); return; }
         if (!place) { alert("Укажи место рождения"); return; }
         if (!$("#astroGender").value) { alert("Укажи пол"); return; }
