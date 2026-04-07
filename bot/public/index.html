@@ -981,21 +981,30 @@
                     data = editData; // direct response (shouldn't happen but just in case)
                 }
             } else {
-                // Generate mode — async with polling
-                const startRes = await fetch(`${API}/api/generate`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        prompt: text,
-                        aspectRatio: sel("aspect"),
-                        imageSize: sel("size"),
-                        quality: sel("quality") || "pro",
-                        telegramId: tg?.initDataUnsafe?.user?.id || null,
-                    }),
+                // Generate mode — async with polling + retry for slow networks
+                const genPayload = JSON.stringify({
+                    prompt: text,
+                    aspectRatio: sel("aspect"),
+                    imageSize: sel("size"),
+                    quality: sel("quality") || "pro",
+                    telegramId: tg?.initDataUnsafe?.user?.id || null,
                 });
-                if (!startRes.ok) throw new Error("API error " + startRes.status);
-                const { jobId } = await startRes.json();
-                if (!jobId) throw new Error("No jobId");
+                let jobId = null;
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        const startRes = await fetch(`${API}/api/generate`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: genPayload,
+                        });
+                        if (startRes.ok) {
+                            const d = await startRes.json();
+                            if (d.jobId) { jobId = d.jobId; break; }
+                        }
+                    } catch (e) { if (attempt === 2) throw e; }
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+                if (!jobId) throw new Error("Не удалось запустить генерацию");
                 currentJobId = jobId;
 
                 // Poll for result
@@ -1514,30 +1523,40 @@
             setTimeout(() => { $("#astroLoadingText").textContent = "DeepSeek создаёт визуальный промт..."; }, 3000);
             setTimeout(() => { $("#astroLoadingText").textContent = "NanoBanana Pro генерирует изображение..."; }, 8000);
 
-            const res = await fetch(`${API}/api/astro/generate`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    name: $("#astroName").value,
-                    birthdate,
-                    birthplace: place,
-                    birthtime: $("#astroTimeUnknown").checked ? null : $("#astroTime").value,
-                    birthtimeUnknown: $("#astroTimeUnknown").checked,
-                    gender: $("#astroGender").value,
-                    intention: $("#astroIntention").value,
-                    faceId,
-                    telegramId: tg?.initDataUnsafe?.user?.id || null,
-                    aspectRatio: sel("aspect") || "1:1",
-                }),
+            const payload = JSON.stringify({
+                name: $("#astroName").value,
+                birthdate,
+                birthplace: place,
+                birthtime: $("#astroTimeUnknown").checked ? null : $("#astroTime").value,
+                birthtimeUnknown: $("#astroTimeUnknown").checked,
+                gender: $("#astroGender").value,
+                intention: $("#astroIntention").value,
+                faceId,
+                telegramId: tg?.initDataUnsafe?.user?.id || null,
+                aspectRatio: sel("aspect") || "1:1",
             });
 
-            if (!res.ok) {
-                const errBody = await res.json().catch(() => ({}));
-                throw new Error(errBody.error || "API error " + res.status);
+            // Retry up to 3 times (slow mobile networks can drop first request)
+            let jobId = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const res = await fetch(`${API}/api/astro/generate`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: payload,
+                    });
+                    if (!res.ok) {
+                        const errBody = await res.json().catch(() => ({}));
+                        throw new Error(errBody.error || "Server error");
+                    }
+                    const astroData = await res.json();
+                    if (astroData.jobId) { jobId = astroData.jobId; break; }
+                } catch (e) {
+                    if (attempt === 2) throw e;
+                    await new Promise(r => setTimeout(r, 2000));
+                }
             }
-            const astroData = await res.json();
-            if (!astroData.jobId) throw new Error(astroData.error || "No jobId");
-            const jobId = astroData.jobId;
+            if (!jobId) throw new Error("Не удалось запустить генерацию");
 
             // Poll
             const data = await pollJob(jobId);
