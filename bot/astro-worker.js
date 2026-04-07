@@ -5,15 +5,47 @@ import { fileURLToPath } from "url";
 import { generateImage, editImage } from "./openrouter.js";
 import supabase from "./db.js";
 
-// Geocode — Nominatim directly (no external deps)
+// Geocode — multi-strategy (Nominatim → Photon → hardcoded fallback)
 async function geocode(place) {
+  // Strategy 1: Nominatim
   try {
     const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1&accept-language=ru`;
-    const res = await fetch(url, { headers: { "User-Agent": "YupSelf/1.0" } });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data[0]) return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
+    const res = await fetch(url, { headers: { "User-Agent": "YupSelf-AstroGen/1.0 (alla@yupsoul.com)" } });
+    if (res.ok) {
+      const data = await res.json();
+      if (data[0]) return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
+    }
   } catch {}
+
+  // Strategy 2: Photon (Komoot)
+  try {
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(place)}&limit=1&lang=ru`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const coords = data.features?.[0]?.geometry?.coordinates;
+      if (coords) return { lat: coords[1], lon: coords[0] };
+    }
+  } catch {}
+
+  // Strategy 3: Hardcoded major cities
+  const CITIES = {
+    "москва": { lat: 55.7558, lon: 37.6173 }, "санкт-петербург": { lat: 59.9343, lon: 30.3351 },
+    "киев": { lat: 50.4501, lon: 30.5234 }, "минск": { lat: 53.9006, lon: 27.5590 },
+    "london": { lat: 51.5074, lon: -0.1278 }, "new york": { lat: 40.7128, lon: -74.0060 },
+    "berlin": { lat: 52.5200, lon: 13.4050 }, "paris": { lat: 48.8566, lon: 2.3522 },
+    "tokyo": { lat: 35.6762, lon: 139.6503 }, "dubai": { lat: 25.2048, lon: 55.2708 },
+    "казань": { lat: 55.7887, lon: 49.1221 }, "новосибирск": { lat: 55.0084, lon: 82.9357 },
+    "екатеринбург": { lat: 56.8389, lon: 60.6057 }, "краснодар": { lat: 45.0355, lon: 38.9753 },
+    "сочи": { lat: 43.5855, lon: 39.7231 }, "ростов-на-дону": { lat: 47.2357, lon: 39.7015 },
+  };
+  const key = place.toLowerCase().trim();
+  if (CITIES[key]) return CITIES[key];
+  for (const [k, v] of Object.entries(CITIES)) {
+    if (key.includes(k)) return v;
+  }
+
+  console.warn("[geocode] all strategies failed for:", place);
   return null;
 }
 
