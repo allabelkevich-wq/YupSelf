@@ -898,6 +898,32 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
   }
 });
 
+async function setupBotMenu() {
+  try {
+    // Permanent "Открыть студию" button (replaces hamburger menu)
+    await bot.api.setChatMenuButton({
+      menu_button: {
+        type: "web_app",
+        text: "Студия",
+        web_app: { url: WEBAPP_URL },
+      },
+    });
+
+    // Bot commands list
+    await bot.api.setMyCommands([
+      { command: "start", description: "Запустить бота" },
+      { command: "imagine", description: "Быстрая генерация изображения" },
+      { command: "style", description: "Выбрать стиль" },
+      { command: "help", description: "Помощь и возможности" },
+      { command: "settings", description: "Текущие настройки" },
+    ]);
+
+    console.log("[bot] Menu button + commands set");
+  } catch (err) {
+    console.warn("[bot] Failed to set menu:", err.message);
+  }
+}
+
 async function main() {
   if (WEBHOOK_URL) {
     const { webhookCallback } = await import("grammy");
@@ -905,14 +931,16 @@ async function main() {
 
     app.listen(PORT, async () => {
       await bot.api.setWebhook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
-      console.log(`YuPself running on port ${PORT} (webhook)`);
+      await setupBotMenu();
+      console.log(`YupSelf running on port ${PORT} (webhook)`);
       const ts = new Date().toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
-      await notifyAdmins(`<b>YuPself обновлён</b>\n${ts} MSK`);
+      await notifyAdmins(`<b>YupSelf обновлён</b>\n${ts} MSK`);
     });
   } else {
     app.listen(PORT, () => console.log(`Health check on port ${PORT}`));
     await bot.api.deleteWebhook();
-    console.log("YuPself starting in polling mode...");
+    await setupBotMenu();
+    console.log("YupSelf starting in polling mode...");
     bot.start();
   }
 }
