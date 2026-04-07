@@ -245,7 +245,7 @@ export async function generateAstroImage(params) {
         { role: "system", content: ASTRO_VISUAL_PROMPT },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 500,
+      max_tokens: 1200,
       temperature: 0.85,
     }),
   });
