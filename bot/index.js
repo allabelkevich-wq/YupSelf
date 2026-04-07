@@ -87,8 +87,7 @@ const STYLES = [
 ];
 
 // ── Web App URL ─────────────────────────────────────────────────────
-const WEBAPP_BASE = process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com";
-const WEBAPP_URL = WEBAPP_BASE + "?v=" + Date.now(); // bust Telegram WebView cache
+const WEBAPP_URL = process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com";
 
 // ── /start (with referral support) ──────────────────────────────────
 bot.command("start", async (ctx) => {
@@ -524,15 +523,13 @@ const app = express();
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// Force cache bust: redirect / to /?v=BUILD_TS
-const BUILD_TS = Date.now();
-app.get("/", (req, res, next) => {
-  if (!req.query.v || req.query.v !== String(BUILD_TS)) {
-    return res.redirect(302, `/?v=${BUILD_TS}`);
+// No-cache headers for HTML (no redirect — Telegram WebView doesn't follow 302)
+app.use((req, res, next) => {
+  if (req.path === "/" || req.path.endsWith(".html")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
   }
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
   next();
 });
 app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false, lastModified: false }));
