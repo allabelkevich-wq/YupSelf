@@ -5,6 +5,7 @@ import { enhancePrompt, translatePrompt, generateImage, editImage } from "./open
 import { transcribeAudio } from "./groq.js";
 import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
+import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -676,6 +677,38 @@ app.post("/api/favorite/:id", async (req, res) => {
   }
 });
 
+// ── Face Memory API ─────────────────────────────────────────────────
+app.post("/api/face/save", upload.single("face"), async (req, res) => {
+  try {
+    const { telegramId, name } = req.body;
+    if (!telegramId || !req.file) return res.status(400).json({ error: "telegramId and face required" });
+    const b64 = req.file.buffer.toString("base64");
+    const face = await saveFace(Number(telegramId), name || "Моё лицо", b64);
+    res.json({ id: face.id, name: face.name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/faces/:telegramId", async (req, res) => {
+  try {
+    const faces = await getSavedFaces(Number(req.params.telegramId));
+    res.json(faces);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/face/:id", async (req, res) => {
+  try {
+    const { telegramId } = req.body;
+    await deleteFace(Number(req.params.id), Number(telegramId));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── DaraiPay API ────────────────────────────────────────────────────
 app.get("/api/packages", (_req, res) => {
   res.json({ packages: PACKAGES, merchantAccount: MERCHANT_ACCOUNT });
@@ -718,15 +751,32 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
     if (!req.files?.length) return res.status(400).json({ error: "at least 1 image required" });
 
-    const imageBase64List = req.files.map(f => f.buffer.toString("base64"));
-    console.log("[edit] images:", req.files.length, "sizes:", req.files.map(f => f.size), "prompt:", prompt.slice(0, 50));
+    let imageBase64List = req.files.map(f => f.buffer.toString("base64"));
+    const faceId = Number(req.body.faceId) || null;
+    const telegramId = Number(req.body.telegramId) || null;
+    console.log("[edit] images:", req.files.length, "faceId:", faceId, "prompt:", prompt.slice(0, 50));
 
-    // Async job — return immediately, process in background
+    // If face memory enabled — prepend saved face image to reference list
+    let facePromptSuffix = "";
+    if (faceId && telegramId) {
+      try {
+        const face = await getFaceImage(faceId, telegramId);
+        if (face?.face_image_b64) {
+          imageBase64List = [face.face_image_b64, ...imageBase64List];
+          facePromptSuffix = `. Preserve the face identity from the first reference image exactly — same facial features, expression style, eye color, face shape. Character: ${face.name || "main character"}.`;
+          console.log("[edit] face loaded:", face.name);
+        }
+      } catch (e) { console.warn("[edit] face load failed:", e.message); }
+    }
+
+    const fullPrompt = prompt + facePromptSuffix;
+
+    // Async job
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     jobs.set(jobId, { status: "processing", prompt });
 
     // Start edit in background
-    editImage(prompt, imageBase64List, {
+    editImage(fullPrompt, imageBase64List, {
       aspectRatio: req.body.aspectRatio || "1:1",
       imageSize: req.body.imageSize || "1K",
     }).then(result => {

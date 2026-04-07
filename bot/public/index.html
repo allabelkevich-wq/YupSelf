@@ -495,6 +495,17 @@
             <span class="ref-clear" id="refClear">Очистить</span>
         </div>
 
+        <!-- Face Memory -->
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; color:var(--text-secondary);">
+                <input type="checkbox" id="faceCheck" style="accent-color:var(--accent-1); width:16px; height:16px;">
+                Запомнить лицо
+            </label>
+            <select id="faceSelect" style="flex:1; padding:6px 10px; border-radius:9999px; background:var(--surface); border:1px solid var(--border); color:var(--text-secondary); font-size:12px; font-family:'Manrope',sans-serif; display:none;">
+                <option value="">Новое лицо</option>
+            </select>
+        </div>
+
         <!-- Yupik mascot button -->
         <div style="margin-bottom:16px;">
             <button class="chip on" id="yupikBtn" style="padding:8px 18px; font-size:13px;">Создать Юпика</button>
@@ -872,10 +883,15 @@
                 form.append("prompt", text);
                 form.append("aspectRatio", sel("aspect"));
                 form.append("imageSize", sel("size"));
+                if (activeFaceId) form.append("faceId", String(activeFaceId));
+                const tgUser = tg?.initDataUnsafe?.user;
+                if (tgUser) form.append("telegramId", String(tgUser.id));
                 for (const f of refFiles) {
                     const compressed = await compressImage(f);
                     form.append("images", compressed);
                 }
+                // Save face if checkbox on and no face saved yet
+                await maybeSaveFace();
                 const editRes = await fetch(`${API}/api/edit`, { method: "POST", body: form });
                 if (!editRes.ok) throw new Error("Edit error " + editRes.status);
                 const editData = await editRes.json();
@@ -945,6 +961,57 @@
     $("#prompt").addEventListener("keydown", e => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generate(); }
     });
+
+    // ── Face Memory ──────────────────────────────────────
+    const faceCheck = $("#faceCheck");
+    const faceSelect = $("#faceSelect");
+    let activeFaceId = null;
+
+    faceCheck.addEventListener("change", async () => {
+        if (faceCheck.checked) {
+            faceSelect.style.display = "block";
+            // Load saved faces
+            const tgUser = tg?.initDataUnsafe?.user;
+            if (tgUser) {
+                try {
+                    const res = await fetch(`${API}/api/faces/${tgUser.id}`);
+                    const faces = await res.json();
+                    faceSelect.innerHTML = '<option value="">Сохранить новое лицо при генерации</option>';
+                    for (const f of faces) {
+                        faceSelect.innerHTML += `<option value="${f.id}">${f.name}</option>`;
+                    }
+                } catch {}
+            }
+        } else {
+            faceSelect.style.display = "none";
+            activeFaceId = null;
+        }
+    });
+
+    faceSelect.addEventListener("change", () => {
+        activeFaceId = faceSelect.value ? Number(faceSelect.value) : null;
+    });
+
+    // Save face after first upload if checkbox is on
+    async function maybeSaveFace() {
+        if (!faceCheck.checked || activeFaceId || !refFiles.length) return;
+        const tgUser = tg?.initDataUnsafe?.user;
+        if (!tgUser) return;
+        try {
+            const compressed = await compressImage(refFiles[0], 512);
+            const form = new FormData();
+            form.append("face", compressed);
+            form.append("telegramId", String(tgUser.id));
+            form.append("name", "Моё лицо");
+            const res = await fetch(`${API}/api/face/save`, { method: "POST", body: form });
+            const data = await res.json();
+            if (data.id) {
+                activeFaceId = data.id;
+                faceSelect.innerHTML += `<option value="${data.id}" selected>Моё лицо</option>`;
+                faceSelect.value = String(data.id);
+            }
+        } catch (e) { console.error("[face save]", e); }
+    }
 
     // ── Retry / New / Download / Share ─────────────────────
     $("#retryBtn").addEventListener("click", generate);
