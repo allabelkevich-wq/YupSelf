@@ -150,7 +150,24 @@ export async function generateImage(prompt, imageConfig = {}) {
     }
   }
 
-  // Attempt 2: OpenRouter (fallback)
+  // Attempt 2: laozhang Flash (if Pro was rate-limited)
+  if (LAOZHANG_API_KEY && imageConfig.quality !== "fast") {
+    try {
+      console.log("[image] trying laozhang Flash fallback...");
+      const result = await _callImageApi(
+        LAOZHANG_URL,
+        LAOZHANG_API_KEY,
+        "gemini-2.5-flash-image",
+        prompt,
+        config
+      );
+      if (result) return result;
+    } catch (err) {
+      console.warn("[image] laozhang Flash failed:", err.message);
+    }
+  }
+
+  // Attempt 3: OpenRouter (last resort)
   try {
     const result = await _callImageApi(
       OPENROUTER_URL,
