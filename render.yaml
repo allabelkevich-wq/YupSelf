@@ -3,7 +3,7 @@ services:
     name: yupself-bot
     runtime: node
     plan: starter
-    buildCommand: npm install && (npm install swisseph 2>/dev/null && npm rebuild swisseph 2>/dev/null || echo "swisseph skipped")
+    buildCommand: apt-get update -qq && apt-get install -y -qq build-essential python3 2>/dev/null || true; npm install; npm install swisseph 2>/dev/null || echo "swisseph skipped"
     startCommand: node bot/index.js
     healthCheckPath: /healthz
     envVars:
