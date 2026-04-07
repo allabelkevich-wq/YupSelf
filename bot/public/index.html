@@ -837,12 +837,16 @@ window.addEventListener("unhandledrejection", function(e) {
     // ── Generation counter (localStorage) ────────────────
     const APP_VERSION = "2";
     const FREE_LIMIT = 100;
-    // Reset counter if version changed (clear old test data)
-    if (localStorage.getItem("yupself_version") !== APP_VERSION) {
-        localStorage.setItem("yupself_version", APP_VERSION);
-        localStorage.setItem("yupself_gens", "0");
+    // Safe localStorage wrapper (disabled in data: URLs and some WebViews)
+    const storage = {
+        get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+        set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    };
+    if (storage.get("yupself_version") !== APP_VERSION) {
+        storage.set("yupself_version", APP_VERSION);
+        storage.set("yupself_gens", "0");
     }
-    let genCount = parseInt(localStorage.getItem("yupself_gens") || "0", 10);
+    let genCount = parseInt(storage.get("yupself_gens") || "0", 10);
 
     function updateCounter() {
         $("#genCount").textContent = genCount;
@@ -1038,7 +1042,7 @@ window.addEventListener("unhandledrejection", function(e) {
 
             // Increment counter
             genCount++;
-            localStorage.setItem("yupself_gens", String(genCount));
+            storage.set("yupself_gens", String(genCount));
             updateCounter();
 
             setTimeout(() => {
