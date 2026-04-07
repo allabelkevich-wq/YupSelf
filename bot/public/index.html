@@ -1258,6 +1258,7 @@ window.addEventListener("unhandledrejection", function(e) {
             tab.classList.add("active");
             $(`#${tab.dataset.tab}`).classList.add("active");
             if (tab.dataset.tab === "tabCabinet") loadCabinet();
+            if (tab.dataset.tab === "tabAstro") { loadAstroData(); prefillFromTelegram(); }
         });
     });
 
@@ -1442,6 +1443,47 @@ window.addEventListener("unhandledrejection", function(e) {
         }
     });
 
+    // ── Astro: Save/Load birth data ─────────────────────
+    function saveAstroData() {
+        try {
+            const data = {
+                name: $("#astroName").value,
+                day: $("#astroDay").value,
+                month: $("#astroMonth").value,
+                year: $("#astroYear").value,
+                place: $("#astroPlace").value,
+                time: $("#astroTime").value,
+                timeUnknown: $("#astroTimeUnknown").checked,
+                gender: $("#astroGender").value,
+            };
+            storage.set("yupself_astro", JSON.stringify(data));
+        } catch {}
+    }
+
+    function loadAstroData() {
+        try {
+            const raw = storage.get("yupself_astro");
+            if (!raw) return;
+            const d = JSON.parse(raw);
+            if (d.name) $("#astroName").value = d.name;
+            if (d.day) $("#astroDay").value = d.day;
+            if (d.month) $("#astroMonth").value = d.month;
+            if (d.year) $("#astroYear").value = d.year;
+            if (d.place) $("#astroPlace").value = d.place;
+            if (d.time) $("#astroTime").value = d.time;
+            if (d.timeUnknown) $("#astroTimeUnknown").checked = true;
+            if (d.gender) $("#astroGender").value = d.gender;
+        } catch {}
+    }
+
+    // Also prefill from Telegram user data
+    function prefillFromTelegram() {
+        const tgUser = tg?.initDataUnsafe?.user;
+        if (tgUser && !$("#astroName").value) {
+            $("#astroName").value = tgUser.first_name || "";
+        }
+    }
+
     // ── Astro Tab Logic ──────────────────────────────────
     // Populate date selects
     const dayS = $("#astroDay"), monthS = $("#astroMonth"), yearS = $("#astroYear");
@@ -1449,6 +1491,10 @@ window.addEventListener("unhandledrejection", function(e) {
     const months = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
     months.forEach((m, i) => monthS.innerHTML += `<option value="${i+1}">${m}</option>`);
     for (let y = 2010; y >= 1940; y--) yearS.innerHTML += `<option value="${y}">${y}</option>`;
+
+    // Load saved data on page load
+    loadAstroData();
+    prefillFromTelegram();
 
     // Birthplace autocomplete
     let placeTimer = null;
@@ -1509,6 +1555,9 @@ window.addEventListener("unhandledrejection", function(e) {
         if (!day || !month || !year) { alert("Укажи дату рождения"); return; }
         if (!place) { alert("Укажи место рождения"); return; }
         if (!$("#astroGender").value) { alert("Укажи пол"); return; }
+
+        // Save form data for next time
+        saveAstroData();
 
         const birthdate = `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
         const btn = $("#astroGenBtn");
