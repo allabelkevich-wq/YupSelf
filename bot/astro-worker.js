@@ -2,18 +2,25 @@ import "dotenv/config";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-let getAstroSnapshot;
-try {
-  const mod = await import("./astroLib.js");
-  getAstroSnapshot = mod.getAstroSnapshot;
-} catch {
-  // Fallback: simplified astro calculation without swisseph
-  getAstroSnapshot = (opts) => buildSimplifiedChart(opts);
-}
-
-import { geocode } from "./geocode.js";
 import { generateImage, editImage } from "./openrouter.js";
 import supabase from "./db.js";
+
+// Geocode — Nominatim directly (no external deps)
+async function geocode(place) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1&accept-language=ru`;
+    const res = await fetch(url, { headers: { "User-Agent": "YupSelf/1.0" } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data[0]) return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
+  } catch {}
+  return null;
+}
+
+// Use simplified chart (no swisseph dependency)
+function getAstroSnapshot(opts) {
+  return buildSimplifiedChart(opts);
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
