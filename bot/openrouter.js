@@ -201,18 +201,23 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
   content.push({ type: "text", text: structuredPrompt });
 
   const body = {
-    model: IMAGE_MODEL_PRO, // Always use Pro for edits (better face preservation)
+    model: LAOZHANG_API_KEY ? IMAGE_MODEL_FALLBACK : IMAGE_MODEL_PRO,
     messages: [{ role: "user", content }],
+    max_tokens: 8192,
   };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60000);
 
+  // Try laozhang first (cheaper), then OpenRouter fallback
+  const apiUrl = LAOZHANG_API_KEY ? LAOZHANG_URL : OPENROUTER_URL;
+  const apiKey = LAOZHANG_API_KEY || OPENROUTER_API_KEY;
+
   try {
-    const res = await fetch(OPENROUTER_URL, {
+    const res = await fetch(apiUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -222,7 +227,7 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`API error ${res.status}: ${err}`);
+      throw new Error(`API error ${res.status}: ${err.slice(0, 200)}`);
     }
 
     const data = await res.json();
@@ -230,7 +235,24 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     if (result) return result;
   } catch (err) {
     clearTimeout(timeout);
-    console.warn("[edit] failed:", err.message);
+    console.warn("[edit] primary failed:", err.message);
+
+    // Fallback to other API
+    if (LAOZHANG_API_KEY && OPENROUTER_API_KEY) {
+      try {
+        body.model = IMAGE_MODEL_PRO;
+        const res2 = await fetch(OPENROUTER_URL, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res2.ok) {
+          const data2 = await res2.json();
+          const result2 = _extractImage(data2);
+          if (result2) return result2;
+        }
+      } catch {}
+    }
     throw err;
   }
 
