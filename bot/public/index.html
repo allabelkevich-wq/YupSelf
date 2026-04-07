@@ -810,12 +810,15 @@
 
 <script>
 // Global error handler — catch ANY unhandled error
-window.onerror = (msg, src, line, col, err) => {
-    alert("JS Error: " + msg + "\nLine: " + line + "\nCol: " + col);
+window.YUPSELF_VERSION = "v7-20260407";
+window.onerror = function(msg, src, line, col, err) {
+    alert("JS Error [" + window.YUPSELF_VERSION + "]: " + msg + " (line " + line + ")");
     return true;
 };
-window.addEventListener("unhandledrejection", e => {
-    alert("Promise Error: " + (e.reason?.message || e.reason || "unknown"));
+window.addEventListener("unhandledrejection", function(e) {
+    var reason = e.reason;
+    var msg = reason && reason.message ? reason.message : String(reason);
+    alert("Promise Error [" + window.YUPSELF_VERSION + "]: " + msg);
 });
 
 (function() {

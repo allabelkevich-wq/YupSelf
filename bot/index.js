@@ -87,7 +87,8 @@ const STYLES = [
 ];
 
 // ── Web App URL ─────────────────────────────────────────────────────
-const WEBAPP_URL = process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com";
+const WEBAPP_BASE = process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com";
+const WEBAPP_URL = WEBAPP_BASE + "?v=" + Date.now(); // bust Telegram WebView cache
 
 // ── /start (with referral support) ──────────────────────────────────
 bot.command("start", async (ctx) => {
