@@ -721,30 +721,46 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
     const imageBase64List = req.files.map(f => f.buffer.toString("base64"));
     console.log("[edit] images:", req.files.length, "sizes:", req.files.map(f => f.size), "prompt:", prompt.slice(0, 50));
 
-    const editInstruction = `Edit this attached image according to the following instruction: ${prompt}`;
+    // Async job — return immediately, process in background
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    jobs.set(jobId, { status: "processing", prompt });
 
-    let result;
-    try {
-      result = await editImage(editInstruction, imageBase64List, {
-        aspectRatio: req.body.aspectRatio || "1:1",
-        imageSize: req.body.imageSize || "1K",
+    // Start edit in background
+    editImage(prompt, imageBase64List, {
+      aspectRatio: req.body.aspectRatio || "1:1",
+      imageSize: req.body.imageSize || "1K",
+    }).then(result => {
+      console.log(`[edit job ${jobId}] done!`);
+      jobs.set(jobId, {
+        status: "done",
+        prompt,
+        imageBase64: result.imageBase64 || null,
+        imageUrl: result.imageUrl || null,
       });
-    } catch (editErr) {
-      // Fallback: if edit fails, try regular generation with the prompt
-      console.warn("[edit] editImage failed, falling back to generate:", editErr.message);
-      result = await generateImage(prompt, {
-        aspectRatio: req.body.aspectRatio || "1:1",
-        imageSize: req.body.imageSize || "1K",
-      });
-    }
-
-    res.json({
-      enhancedPrompt: prompt,
-      imageBase64: result.imageBase64 || null,
-      imageUrl: result.imageUrl || null,
+      setTimeout(() => jobs.delete(jobId), 300000);
+    }).catch(async (editErr) => {
+      // Fallback to generate
+      console.warn(`[edit job ${jobId}] editImage failed, fallback:`, editErr.message);
+      try {
+        const result = await generateImage(prompt, {
+          aspectRatio: req.body.aspectRatio || "1:1",
+          imageSize: req.body.imageSize || "1K",
+        });
+        jobs.set(jobId, {
+          status: "done",
+          prompt,
+          imageBase64: result.imageBase64 || null,
+          imageUrl: result.imageUrl || null,
+        });
+      } catch (genErr) {
+        jobs.set(jobId, { status: "error", error: genErr.message });
+      }
+      setTimeout(() => jobs.delete(jobId), 60000);
     });
+
+    res.json({ jobId });
   } catch (err) {
-    console.error("[api/edit]", err.message, err.stack?.slice(0, 200));
+    console.error("[api/edit]", err.message);
     res.status(500).json({ error: "Edit failed: " + err.message });
   }
 });

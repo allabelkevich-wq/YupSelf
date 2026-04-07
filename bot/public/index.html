@@ -867,43 +867,23 @@
 
             let data;
             if (refFiles.length > 0) {
-                // Edit mode — also async to avoid timeout
+                // Edit mode — async with polling (same as generate)
                 const form = new FormData();
                 form.append("prompt", text);
                 form.append("aspectRatio", sel("aspect"));
                 form.append("imageSize", sel("size"));
-                // Compress images before sending (Gemini works best with 1024x1024 JPEG)
                 for (const f of refFiles) {
                     const compressed = await compressImage(f);
                     form.append("images", compressed);
                 }
-                try {
-                    const res = await fetch(`${API}/api/edit`, { method: "POST", body: form });
-                    if (!res.ok) {
-                        const errData = await res.json().catch(() => ({}));
-                        throw new Error(errData.error || "Edit error");
-                    }
-                    data = await res.json();
-                } catch (editErr) {
-                    // Fallback: clear refs and try normal generation
-                    console.warn("Edit failed, trying normal gen:", editErr.message);
-                    refFiles = [];
-                    renderRefPreviews();
-                    const startRes = await fetch(`${API}/api/generate`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            prompt: text,
-                            aspectRatio: sel("aspect"),
-                            imageSize: sel("size"),
-                            quality: sel("quality") || "pro",
-                            telegramId: tg?.initDataUnsafe?.user?.id || null,
-                        }),
-                    });
-                    if (!startRes.ok) throw editErr; // re-throw original
-                    const { jobId } = await startRes.json();
-                    if (jobId) { currentJobId = jobId; data = await pollJob(jobId); }
-                    else throw editErr;
+                const editRes = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                if (!editRes.ok) throw new Error("Edit error " + editRes.status);
+                const editData = await editRes.json();
+                if (editData.jobId) {
+                    currentJobId = editData.jobId;
+                    data = await pollJob(editData.jobId);
+                } else {
+                    data = editData; // direct response (shouldn't happen but just in case)
                 }
             } else {
                 // Generate mode — async with polling
