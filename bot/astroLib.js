@@ -7,7 +7,13 @@
 
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const swisseph = require("swisseph");
+let swisseph;
+try {
+  swisseph = require("swisseph");
+} catch {
+  console.warn("[astroLib] swisseph not available — astro calculations disabled");
+  swisseph = null;
+}
 
 const SIGNS_RU = [
   "Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева",
@@ -244,6 +250,9 @@ function computeVimshottariDashas(moonLongitude, birthDate, nowDate = new Date()
  * @returns {{ snapshot_text: string, snapshot_json: object, error?: string }}
  */
 export function getAstroSnapshot(opts) {
+  if (!swisseph) {
+    return { snapshot_text: "Astro calculations unavailable", snapshot_json: { positions: [], aspects: [], retrograde: [], cusps: [], dashas: {} }, error: "swisseph not installed" };
+  }
   const {
     year,
     month,

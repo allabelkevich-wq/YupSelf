@@ -6,8 +6,21 @@ import { transcribeAudio } from "./groq.js";
 import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
-import { generateAstroImage } from "./astro-worker.js";
-import { geocode } from "./geocode.js";
+let generateAstroImage;
+try {
+  const astroModule = await import("./astro-worker.js");
+  generateAstroImage = astroModule.generateAstroImage;
+} catch (err) {
+  console.warn("[astro] astro-worker not available:", err.message);
+  generateAstroImage = async () => { throw new Error("Astro generation unavailable on this server"); };
+}
+let geocodeFn;
+try {
+  const geoModule = await import("./geocode.js");
+  geocodeFn = geoModule.geocode;
+} catch {
+  geocodeFn = async () => null;
+}
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
