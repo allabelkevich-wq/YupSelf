@@ -6,6 +6,8 @@ import { transcribeAudio } from "./groq.js";
 import { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
+import { generateAstroImage } from "./astro-worker.js";
+import { geocode } from "./geocode.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -741,6 +743,87 @@ app.get("/api/payment/pending/:telegramId", async (req, res) => {
     res.json(payments);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Astro Image Generation API ───────────────────────────────────────
+app.post("/api/astro/generate", async (req, res) => {
+  try {
+    const { name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, intention, faceId, telegramId, aspectRatio } = req.body;
+    if (!birthdate || !birthplace) return res.status(400).json({ error: "birthdate and birthplace required" });
+
+    const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    jobs.set(jobId, { status: "processing", type: "astro" });
+
+    console.log(`[astro job ${jobId}] starting for ${name}, ${birthdate}, ${birthplace}`);
+
+    // Get face image if faceId provided
+    let faceImageB64 = null;
+    if (faceId && telegramId) {
+      try {
+        const face = await getFaceImage(Number(faceId), Number(telegramId));
+        if (face?.face_image_b64) faceImageB64 = face.face_image_b64;
+      } catch {}
+    }
+
+    // Run pipeline in background
+    generateAstroImage({
+      name, birthdate, birthplace, birthtime,
+      birthtimeUnknown: !!birthtimeUnknown,
+      gender, intention, faceImageB64, aspectRatio: aspectRatio || "1:1",
+    }).then(result => {
+      console.log(`[astro job ${jobId}] done!`);
+      jobs.set(jobId, {
+        status: "done",
+        type: "astro",
+        imageBase64: result.imageBase64,
+        imageUrl: result.imageUrl,
+        astroPrompt: result.astroPrompt,
+        snapshotSummary: result.snapshotSummary,
+      });
+      // Save to DB
+      if (telegramId) {
+        supabase.from("astro_image_requests").insert({
+          telegram_id: Number(telegramId),
+          name, birthdate, birthplace, birthtime, gender, intention,
+          aspect_ratio: aspectRatio || "1:1",
+          status: "completed",
+          astro_snapshot: result.astroSnapshot,
+          image_prompt: result.astroPrompt,
+          completed_at: new Date().toISOString(),
+        }).then(() => {}).catch(e => console.error("[astro db]", e.message));
+      }
+      setTimeout(() => jobs.delete(jobId), 300000);
+    }).catch(err => {
+      console.error(`[astro job ${jobId}] error:`, err.message);
+      jobs.set(jobId, { status: "error", error: err.message });
+      setTimeout(() => jobs.delete(jobId), 60000);
+    });
+
+    res.json({ jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Places autocomplete ─────────────────────────────────────────────
+app.get("/api/places", async (req, res) => {
+  try {
+    const q = req.query.q;
+    if (!q || q.length < 2) return res.json([]);
+    // Use Nominatim for place suggestions
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&accept-language=ru`;
+    const r = await fetch(url, { headers: { "User-Agent": "YupSelf/1.0" } });
+    if (!r.ok) return res.json([]);
+    const data = await r.json();
+    res.json(data.map(d => ({
+      name: d.display_name?.split(",").slice(0, 2).join(",").trim(),
+      fullName: d.display_name,
+      lat: Number(d.lat),
+      lon: Number(d.lon),
+    })));
+  } catch {
+    res.json([]);
   }
 });
 

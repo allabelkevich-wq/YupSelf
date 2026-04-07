@@ -668,6 +668,81 @@
     </div>
     </div><!-- /tabCabinet -->
 
+    <!-- ═══ TAB: АСТРО ═══ -->
+    <div class="tab-content" id="tabAstro">
+    <div class="glass">
+        <div style="text-align:center; margin-bottom:20px;">
+            <div style="font-size:20px; font-weight:800; color:var(--accent-1);">Визуальный портрет по звёздам</div>
+            <div style="font-size:13px; color:var(--text-secondary); margin-top:4px;">Загрузи фото и дату рождения — AI создаст уникальный образ</div>
+        </div>
+
+        <!-- Face photo for astro -->
+        <div class="ref-zone" id="astroFaceZone">
+            <input type="file" id="astroFaceInput" accept="image/*">
+            <div class="ref-label">Загрузи <b>своё фото</b> для персонализации</div>
+            <div class="ref-previews" id="astroFacePreview"></div>
+        </div>
+
+        <!-- Birth form -->
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            <input type="text" id="astroName" placeholder="Имя" style="width:100%; padding:12px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-primary); font-family:'Manrope',sans-serif; font-size:14px; outline:none;">
+
+            <div style="display:flex; gap:6px;">
+                <select id="astroDay" style="flex:1; padding:10px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-secondary); font-family:'Manrope',sans-serif; font-size:13px;">
+                    <option value="">День</option>
+                </select>
+                <select id="astroMonth" style="flex:1.3; padding:10px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-secondary); font-family:'Manrope',sans-serif; font-size:13px;">
+                    <option value="">Месяц</option>
+                </select>
+                <select id="astroYear" style="flex:1; padding:10px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-secondary); font-family:'Manrope',sans-serif; font-size:13px;">
+                    <option value="">Год</option>
+                </select>
+            </div>
+
+            <div style="position:relative;">
+                <input type="text" id="astroPlace" placeholder="Место рождения..." autocomplete="off" style="width:100%; padding:12px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-primary); font-family:'Manrope',sans-serif; font-size:14px; outline:none;">
+                <ul id="astroPlaceSuggestions" style="display:none; position:absolute; top:100%; left:0; right:0; background:rgba(15,20,12,0.95); border:1px solid var(--border); border-radius:12px; list-style:none; padding:4px; margin:4px 0 0; z-index:50; max-height:200px; overflow-y:auto;"></ul>
+            </div>
+
+            <div style="display:flex; gap:6px; align-items:center;">
+                <input type="time" id="astroTime" style="flex:1; padding:10px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-secondary); font-family:'Manrope',sans-serif; font-size:13px;">
+                <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:var(--text-secondary); white-space:nowrap; cursor:pointer;">
+                    <input type="checkbox" id="astroTimeUnknown" style="accent-color:var(--accent-1);"> Не знаю
+                </label>
+            </div>
+
+            <select id="astroGender" style="width:100%; padding:10px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-secondary); font-family:'Manrope',sans-serif; font-size:13px;">
+                <option value="">Пол</option>
+                <option value="male">Мужской</option>
+                <option value="female">Женский</option>
+            </select>
+
+            <input type="text" id="astroIntention" placeholder="Намерение (опционально): Покажи мой внутренний мир" style="width:100%; padding:12px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-primary); font-family:'Manrope',sans-serif; font-size:14px; outline:none;">
+        </div>
+
+        <button class="gen-btn" id="astroGenBtn" style="margin-top:16px;">Создать портрет по звёздам</button>
+
+        <!-- Astro loading -->
+        <div class="loading-wrap" id="astroLoading">
+            <div class="loading-orb"></div>
+            <div class="loading-text" id="astroLoadingText">Рассчитываю натальную карту...</div>
+        </div>
+
+        <!-- Astro result -->
+        <div class="result" id="astroResult">
+            <img id="astroResultImg" class="result-image" alt="" style="width:100%; border-radius:20px;">
+            <div style="text-align:center; margin-top:8px; font-size:12px; color:var(--text-secondary);" id="astroSummary"></div>
+            <div class="result-bar">
+                <button class="rbtn accent" id="astroDlBtn">Скачать</button>
+                <button class="rbtn" id="astroRetryBtn">Другой вариант</button>
+                <button class="rbtn" id="astroShareBtn">Поделиться</button>
+            </div>
+            <div class="prompt-acc" id="astroPromptToggle">Показать промт</div>
+            <div class="prompt-body" id="astroPromptBody"></div>
+        </div>
+    </div>
+    </div><!-- /tabAstro -->
+
     <!-- ═══ PAYMENT MODAL ═══ -->
     <div id="payModal" style="display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.8); display:none; align-items:center; justify-content:center; padding:20px;">
         <div class="glass" style="max-width:420px; width:100%; max-height:90vh; overflow-y:auto;">
@@ -719,6 +794,10 @@
         <button class="nav-tab active" data-tab="tabGenerate">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
             Генерация
+        </button>
+        <button class="nav-tab" data-tab="tabAstro">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m12 2 1.5 6.5L20 12l-6.5 1.5L12 22l-1.5-6.5L4 12l6.5-3.5Z"/></svg>
+            Астро
         </button>
         <button class="nav-tab" data-tab="tabCabinet">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -1336,6 +1415,165 @@
             $("#payCheckBtn").disabled = false;
             $("#payCheckBtn").textContent = "Проверить оплату";
         }
+    });
+
+    // ── Astro Tab Logic ──────────────────────────────────
+    // Populate date selects
+    const dayS = $("#astroDay"), monthS = $("#astroMonth"), yearS = $("#astroYear");
+    for (let d = 1; d <= 31; d++) dayS.innerHTML += `<option value="${d}">${d}</option>`;
+    const months = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+    months.forEach((m, i) => monthS.innerHTML += `<option value="${i+1}">${m}</option>`);
+    for (let y = 2010; y >= 1940; y--) yearS.innerHTML += `<option value="${y}">${y}</option>`;
+
+    // Birthplace autocomplete
+    let placeTimer = null;
+    let selectedPlace = null;
+    $("#astroPlace").addEventListener("input", () => {
+        clearTimeout(placeTimer);
+        const q = $("#astroPlace").value.trim();
+        if (q.length < 2) { $("#astroPlaceSuggestions").style.display = "none"; return; }
+        placeTimer = setTimeout(async () => {
+            try {
+                const res = await fetch(`${API}/api/places?q=${encodeURIComponent(q)}`);
+                const places = await res.json();
+                const ul = $("#astroPlaceSuggestions");
+                ul.innerHTML = "";
+                if (places.length) {
+                    for (const p of places) {
+                        const li = document.createElement("li");
+                        li.textContent = p.name;
+                        li.style.cssText = "padding:8px 12px; cursor:pointer; font-size:13px; color:var(--text-secondary); border-radius:8px;";
+                        li.addEventListener("click", () => {
+                            $("#astroPlace").value = p.name;
+                            selectedPlace = p;
+                            ul.style.display = "none";
+                        });
+                        li.addEventListener("mouseenter", () => li.style.background = "var(--surface-hover)");
+                        li.addEventListener("mouseleave", () => li.style.background = "none");
+                        ul.appendChild(li);
+                    }
+                    ul.style.display = "block";
+                } else ul.style.display = "none";
+            } catch { $("#astroPlaceSuggestions").style.display = "none"; }
+        }, 300);
+    });
+    document.addEventListener("click", e => {
+        if (!e.target.closest("#astroPlace") && !e.target.closest("#astroPlaceSuggestions"))
+            $("#astroPlaceSuggestions").style.display = "none";
+    });
+
+    // Astro face photo
+    let astroFaceFile = null;
+    $("#astroFaceZone").addEventListener("click", () => $("#astroFaceInput").click());
+    $("#astroFaceInput").addEventListener("change", e => {
+        if (e.target.files[0]) {
+            astroFaceFile = e.target.files[0];
+            const img = document.createElement("img");
+            img.className = "ref-thumb";
+            img.src = URL.createObjectURL(astroFaceFile);
+            $("#astroFacePreview").innerHTML = "";
+            $("#astroFacePreview").appendChild(img);
+            $("#astroFaceZone").classList.add("has-files");
+        }
+    });
+
+    // Astro generate
+    $("#astroGenBtn").addEventListener("click", async () => {
+        const day = dayS.value, month = monthS.value, year = yearS.value;
+        const place = $("#astroPlace").value.trim();
+        if (!day || !month || !year) { alert("Укажи дату рождения"); return; }
+        if (!place) { alert("Укажи место рождения"); return; }
+        if (!$("#astroGender").value) { alert("Укажи пол"); return; }
+
+        const birthdate = `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+        const btn = $("#astroGenBtn");
+        btn.disabled = true;
+        btn.textContent = "Рассчитываю...";
+        $("#astroResult").classList.remove("visible");
+        $("#astroLoading").classList.add("visible");
+        $("#astroLoadingText").textContent = "Рассчитываю натальную карту...";
+
+        // Save face if uploaded
+        let faceId = null;
+        if (astroFaceFile && faceCheck.checked && activeFaceId) {
+            faceId = activeFaceId;
+        } else if (astroFaceFile && tg?.initDataUnsafe?.user) {
+            try {
+                const compressed = await compressImage(astroFaceFile, 512);
+                const form = new FormData();
+                form.append("face", compressed);
+                form.append("telegramId", String(tg.initDataUnsafe.user.id));
+                form.append("name", $("#astroName").value || "Астро");
+                const fRes = await fetch(`${API}/api/face/save`, { method: "POST", body: form });
+                const fData = await fRes.json();
+                if (fData.id) faceId = fData.id;
+            } catch {}
+        }
+
+        try {
+            setTimeout(() => { $("#astroLoadingText").textContent = "DeepSeek создаёт визуальный промт..."; }, 3000);
+            setTimeout(() => { $("#astroLoadingText").textContent = "NanoBanana Pro генерирует изображение..."; }, 8000);
+
+            const res = await fetch(`${API}/api/astro/generate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: $("#astroName").value,
+                    birthdate,
+                    birthplace: place,
+                    birthtime: $("#astroTimeUnknown").checked ? null : $("#astroTime").value,
+                    birthtimeUnknown: $("#astroTimeUnknown").checked,
+                    gender: $("#astroGender").value,
+                    intention: $("#astroIntention").value,
+                    faceId,
+                    telegramId: tg?.initDataUnsafe?.user?.id || null,
+                    aspectRatio: sel("aspect") || "1:1",
+                }),
+            });
+
+            if (!res.ok) throw new Error("API error " + res.status);
+            const { jobId } = await res.json();
+            if (!jobId) throw new Error("No jobId");
+
+            // Poll
+            const data = await pollJob(jobId);
+
+            $("#astroLoading").classList.remove("visible");
+
+            if (data.imageBase64) {
+                $("#astroResultImg").src = `data:image/png;base64,${data.imageBase64}`;
+            } else if (data.imageUrl) {
+                $("#astroResultImg").src = data.imageUrl;
+            }
+            $("#astroSummary").textContent = data.snapshotSummary || "";
+            $("#astroPromptBody").textContent = data.astroPrompt || "";
+            $("#astroResult").classList.add("visible");
+            $("#astroResult").scrollIntoView({ behavior: "smooth", block: "center" });
+
+        } catch (err) {
+            $("#astroLoading").classList.remove("visible");
+            alert("Ошибка: " + (err.message || err));
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Создать портрет по звёздам";
+        }
+    });
+
+    // Astro result buttons
+    $("#astroPromptToggle").addEventListener("click", () => {
+        $("#astroPromptBody").classList.toggle("open");
+        $("#astroPromptToggle").textContent = $("#astroPromptBody").classList.contains("open") ? "Скрыть промт" : "Показать промт";
+    });
+    $("#astroDlBtn").addEventListener("click", () => {
+        const a = document.createElement("a");
+        a.href = $("#astroResultImg").src;
+        a.download = `yupself-astro-${Date.now()}.png`;
+        a.click();
+    });
+    $("#astroRetryBtn").addEventListener("click", () => $("#astroGenBtn").click());
+    $("#astroShareBtn").addEventListener("click", () => {
+        if (tg) tg.switchInlineQuery("Мой визуальный портрет по звёздам в YupSelf!", ["users"]);
+        else { navigator.clipboard.writeText("https://t.me/YupSelf_bot"); alert("Ссылка скопирована!"); }
     });
 
     // Referral copy

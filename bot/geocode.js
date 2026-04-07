@@ -1,0 +1,568 @@
+/**
+ * Геокодинг: место рождения (строка) → lat, lon.
+ * ЗАКОН №30: искажение локации рождения недопустимо — используем самые актуальные источники.
+ *
+ * Стратегия (waterfall):
+ *  0. Google Geocoding API (если задан GOOGLE_GEOCODING_API_KEY или GOOGLE_MAPS_API_KEY) — приоритет по точности
+ *  1. Nominatim (OSM) — запрос «как есть», затем нормализованный, укороченный, алиасы, транслит
+ *  2. Photon (Komoot/OSM) — второй геокодер
+ *  3. Приближённые координаты по региону (Россия) — last resort
+ */
+
+const GOOGLE_GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json";
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+
+// ─── Алиасы кириллических городов → Nominatim-запрос ───────────────────────
+const BIRTHPLACE_ALIASES = [
+  [/^\s*Киев\s*,\s*Украин[ае]\s*$/i,           "Kyiv, Ukraine"],
+  [/^\s*Київ\s*,\s*Україн[аи]\s*$/i,            "Kyiv, Ukraine"],
+  [/^\s*Киев\s*$/i,                               "Kyiv, Ukraine"],
+  [/^\s*Київ\s*$/i,                               "Kyiv, Ukraine"],
+  [/^\s*Одесс?[аы]\s*,\s*Украин[ае]\s*$/i,      "Odesa, Ukraine"],
+  [/^\s*Харь?к[іи]в\s*,\s*Украин[ае]\s*$/i,     "Kharkiv, Ukraine"],
+  [/^\s*Львов\s*,\s*Украин[ае]\s*$/i,             "Lviv, Ukraine"],
+  [/^\s*Львів\s*,\s*Україн[аи]\s*$/i,             "Lviv, Ukraine"],
+  [/^\s*Дніпр[оа]\s*,\s*Украин[ае]\s*$/i,        "Dnipro, Ukraine"],
+  [/^\s*Днепр\s*,\s*Украин[ае]\s*$/i,             "Dnipro, Ukraine"],
+  // Беларусь: Солигорск / Салігорск → Salihorsk, Belarus (точные координаты города)
+  [/^\s*Солигорск\s*,\s*Солигорский район\s*,\s*Минская область\s*,\s*Беларусь\s*$/i, "Salihorsk, Belarus"],
+  [/^\s*Солигорск\s*,\s*Минская область\s*,\s*Беларусь\s*$/i,                        "Salihorsk, Belarus"],
+  [/^\s*Солигорск\s*,\s*Беларусь\s*$/i,                                              "Salihorsk, Belarus"],
+  [/^\s*Солигорск\s*$/i,                                                             "Salihorsk, Belarus"],
+  [/^\s*Салігорск\s*,\s*Беларусь\s*$/i,                                              "Salihorsk, Belarus"],
+  [/^\s*Салігорск\s*$/i,                                                             "Salihorsk, Belarus"],
+];
+
+function aliasForNominatim(s) {
+  for (const [re, latin] of BIRTHPLACE_ALIASES) {
+    if (re.test(s)) return latin;
+  }
+  return null;
+}
+
+// ─── Префиксы типов населённых пунктов (для удаления из начала строки) ──────
+const SETTLEMENT_PREFIXES = [
+  /^станица\s+/i,
+  /^ст\.\s*/i,
+  /^деревня\s+/i,
+  /^дер\.\s*/i,
+  /^д\.\s*/i,
+  /^село\s+/i,
+  /^с\.\s*/i,
+  /^хутор\s+/i,
+  /^х\.\s*/i,
+  /^посёлок\s+/i,
+  /^поселок\s+/i,
+  /^пос\.\s*/i,
+  /^п\.\s*/i,
+  /^рп\s+/i,
+  /^р\.п\.\s*/i,
+  /^рабочий\s+посёлок\s+/i,
+  /^пгт\s+/i,
+  /^аул\s+/i,
+  /^а\.\s*/i,
+  /^слобода\s+/i,
+  /^местечко\s+/i,
+  /^городской\s+округ\s+/i,
+  /^муниципальный\s+округ\s+/i,
+  /^городское\s+поселение\s+/i,
+  /^г\.\s*/i,
+  /^город\s+/i,
+];
+
+/**
+ * Убирает тип населённого пункта и суффикс "район" из строки.
+ */
+function extractCityName(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return s;
+  for (const re of SETTLEMENT_PREFIXES) {
+    const trimmed = s.replace(re, "").trim();
+    if (trimmed && trimmed !== s) { s = trimmed; break; }
+  }
+  s = s.replace(/\s+район\s*$/i, "").trim();
+  return s || raw;
+}
+
+// ─── Нормализация родительного падежа регионов → именительный ───────────────
+// "Краснодарского края" → "Краснодарский край"
+// "Ростовской области" → "Ростовская область"
+// "Республики Башкортостан" → "Республика Башкортостан"
+// "города Москвы" → "Москва"
+const GENITIVE_REGION_RULES = [
+  [/\bРеспублики\s+(\S+)/gi,              "Республика $1"],
+  [/\bгорода\s+(\S+)/gi,                  "$1"],
+  [/\b(\S+)ского\s+края\b/gi,             "$1ский край"],
+  [/\b(\S+)ского\s+района\b/gi,           "$1ский район"],
+  [/\b(\S+)ского\s+округа\b/gi,           "$1ский округ"],
+  [/\b(\S+)цкого\s+края\b/gi,             "$1цкий край"],
+  [/\b(\S+)цкого\s+района\b/gi,           "$1цкий район"],
+  [/\b(\S+)ской\s+области\b/gi,           "$1ская область"],
+  [/\b(\S+)ской\s+республики\b/gi,        "$1ская республика"],
+  [/\b(\S+)ной\s+области\b/gi,            "$1ная область"],
+  [/\b(\S+)ной\s+республики\b/gi,         "$1ная республика"],
+  [/\b(\S+)ого\s+края\b/gi,               "$1ый край"],
+  [/\b(\S+)ого\s+района\b/gi,             "$1ый район"],
+  [/\b(\S+)ого\s+округа\b/gi,             "$1ый округ"],
+  [/\b(\S+)ой\s+области\b/gi,             "$1ая область"],
+  [/\b(\S+)ей\s+области\b/gi,             "$1ь область"],
+];
+
+function normalizeGenitiveCase(s) {
+  let result = s;
+  for (const [re, repl] of GENITIVE_REGION_RULES) {
+    result = result.replace(re, repl);
+  }
+  return result;
+}
+
+/**
+ * Нормализует полный адрес:
+ * — убирает префиксы типа нас.пункта в каждой части
+ * — приводит родительный падеж региона к именительному
+ */
+function normalizeAddress(fullAddress) {
+  const s = String(fullAddress || "").trim();
+  if (!s) return s;
+  const parts = s.split(",").map((p) => p.trim()).filter(Boolean)
+    // Убираем почтовые индексы (MD-3034, 123456, BY-220000 и т.д.) — мешают геокодерам
+    .filter(p => !/^[A-Z]{0,3}-?\d{3,6}$/.test(p));
+  if (parts.length === 0) return s;
+  const normalized = parts.map((p, i) => {
+    // Первая часть — название нас.пункта: убираем тип
+    if (i === 0) return extractCityName(p);
+    // Остальные части — могут содержать регион в родит.падеже
+    return normalizeGenitiveCase(p);
+  });
+  const result = normalized.filter(Boolean).join(", ");
+  return result !== s ? result : s;
+}
+
+/**
+ * Строит укороченный запрос "нас.пункт, страна".
+ */
+function shortenForFallback(fullAddress) {
+  const s = String(fullAddress || "").trim();
+  if (!s) return null;
+  const parts = s.split(",").map((p) => p.trim()).filter(Boolean)
+    .filter(p => !/^[A-Z]{0,3}-?\d{3,6}$/.test(p));
+  if (parts.length === 0) return null;
+  const city = extractCityName(parts[0]);
+  if (!city) return null;
+  const hasRussia = /россия|russia|рф\b/i.test(s);
+  const country = hasRussia ? "Россия" : (parts.length > 1 ? parts[parts.length - 1] : "Россия");
+  if (city.toLowerCase() === country.toLowerCase()) return city;
+  return `${city}, ${country}`;
+}
+
+// ─── Транслитерация кириллица → латиница ────────────────────────────────────
+const RU_LAT = {
+  а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"e",ж:"zh",з:"z",
+  и:"i",й:"y",к:"k",л:"l",м:"m",н:"n",о:"o",п:"p",р:"r",
+  с:"s",т:"t",у:"u",ф:"f",х:"kh",ц:"ts",ч:"ch",ш:"sh",щ:"shch",
+  ъ:"",ы:"y",ь:"",э:"e",ю:"yu",я:"ya",
+};
+function transliterate(text) {
+  if (!text) return "";
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i].toLowerCase();
+    if (RU_LAT[c] !== undefined) {
+      const lat = RU_LAT[c];
+      const isUpper = text[i] !== text[i].toLowerCase();
+      out += isUpper && lat ? lat[0].toUpperCase() + lat.slice(1) : lat;
+    } else {
+      out += text[i];
+    }
+  }
+  return out;
+}
+
+/** Для "Город, Россия" → "Gorod, Russia" (Nominatim лучше ищет по-латински). */
+function toLatinRussiaQuery(q) {
+  const s = String(q || "").trim();
+  if (!s || !/россия/i.test(s)) return null;
+  const idx = s.lastIndexOf(",");
+  const city = (idx >= 0 ? s.slice(0, idx).trim() : s);
+  if (!city) return null;
+  const lat = transliterate(city);
+  if (!lat) return null;
+  return lat[0].toUpperCase() + lat.slice(1).toLowerCase() + ", Russia";
+}
+
+/** Для "Город, Беларусь" → "Gorod, Belarus" (латиница для Nominatim). */
+function toLatinBelarusQuery(q) {
+  const s = String(q || "").trim();
+  if (!s || !/беларусь|belarus/i.test(s)) return null;
+  const idx = s.lastIndexOf(",");
+  const city = (idx >= 0 ? s.slice(0, idx).trim() : s);
+  if (!city) return null;
+  const lat = transliterate(city);
+  if (!lat) return null;
+  return lat[0].toUpperCase() + lat.slice(1).toLowerCase() + ", Belarus";
+}
+
+// ─── Регионы России: приближённые координаты для last-resort fallback ─────────
+// Если распознали регион, но не нашли само место — используем центр региона.
+const RUSSIA_REGIONS_COORDS = {
+  "краснодарский":   { lat: 45.04, lon: 38.98 },
+  "ростовская":      { lat: 47.22, lon: 39.71 },
+  "московская":      { lat: 55.75, lon: 37.62 },
+  "ленинградская":   { lat: 59.94, lon: 30.31 },
+  "свердловская":    { lat: 56.84, lon: 60.60 },
+  "нижегородская":   { lat: 56.33, lon: 44.00 },
+  "самарская":       { lat: 53.20, lon: 50.15 },
+  "воронежская":     { lat: 51.67, lon: 39.18 },
+  "саратовская":     { lat: 51.53, lon: 46.03 },
+  "волгоградская":   { lat: 48.71, lon: 44.51 },
+  "пермский":        { lat: 58.01, lon: 56.23 },
+  "красноярский":    { lat: 56.01, lon: 92.87 },
+  "иркутская":       { lat: 52.29, lon: 104.30 },
+  "новосибирская":   { lat: 54.99, lon: 82.90 },
+  "омская":          { lat: 54.99, lon: 73.37 },
+  "челябинская":     { lat: 55.16, lon: 61.40 },
+  "тюменская":       { lat: 57.15, lon: 68.00 },
+  "алтайский":       { lat: 53.35, lon: 83.75 },
+  "ставропольский":  { lat: 45.05, lon: 41.97 },
+  "белгородская":    { lat: 50.60, lon: 36.59 },
+  "тульская":        { lat: 54.20, lon: 37.62 },
+  "калужская":       { lat: 54.51, lon: 36.26 },
+  "брянская":        { lat: 53.25, lon: 34.37 },
+  "курская":         { lat: 51.73, lon: 36.19 },
+  "орловская":       { lat: 52.97, lon: 36.07 },
+  "липецкая":        { lat: 52.60, lon: 39.57 },
+  "тамбовская":      { lat: 52.72, lon: 41.45 },
+  "пензенская":      { lat: 53.20, lon: 45.01 },
+  "ульяновская":     { lat: 54.32, lon: 48.38 },
+  "оренбургская":    { lat: 51.77, lon: 55.10 },
+  "башкортостан":    { lat: 54.74, lon: 55.97 },
+  "татарстан":       { lat: 55.78, lon: 49.12 },
+  "кировская":       { lat: 58.60, lon: 49.65 },
+  "удмуртская":      { lat: 56.84, lon: 53.20 },
+  "чувашская":       { lat: 56.14, lon: 47.25 },
+  "мордовия":        { lat: 54.44, lon: 44.56 },
+  "марий":           { lat: 56.63, lon: 47.89 },
+  "чечня":           { lat: 43.32, lon: 45.70 },
+  "дагестан":        { lat: 42.97, lon: 47.50 },
+  "кабардино":       { lat: 43.51, lon: 43.40 },
+  "северная осетия": { lat: 43.05, lon: 44.67 },
+  "ингушетия":       { lat: 43.12, lon: 44.82 },
+  "адыгея":          { lat: 44.61, lon: 40.10 },
+  "карачаево":       { lat: 43.73, lon: 41.74 },
+  "калмыкия":        { lat: 46.31, lon: 44.26 },
+  "астраханская":    { lat: 46.35, lon: 48.04 },
+  "мурманская":      { lat: 68.97, lon: 33.07 },
+  "архангельская":   { lat: 64.54, lon: 40.54 },
+  "вологодская":     { lat: 59.22, lon: 39.88 },
+  "ярославская":     { lat: 57.63, lon: 39.87 },
+  "костромская":     { lat: 57.77, lon: 40.93 },
+  "ивановская":      { lat: 57.00, lon: 40.97 },
+  "владимирская":    { lat: 56.13, lon: 40.41 },
+  "рязанская":       { lat: 54.63, lon: 39.74 },
+  "смоленская":      { lat: 54.78, lon: 32.04 },
+  "тверская":        { lat: 56.86, lon: 35.90 },
+  "псковская":       { lat: 57.82, lon: 28.33 },
+  "новгородская":    { lat: 58.53, lon: 31.27 },
+  "карелия":         { lat: 61.79, lon: 34.36 },
+  "коми":            { lat: 61.68, lon: 50.84 },
+  "якутия":          { lat: 62.03, lon: 129.73 },
+  "забайкальский":   { lat: 51.53, lon: 113.50 },
+  "хабаровский":     { lat: 48.48, lon: 135.07 },
+  "приморский":      { lat: 43.11, lon: 131.87 },
+  "амурская":        { lat: 50.29, lon: 127.53 },
+  "сахалинская":     { lat: 46.96, lon: 142.73 },
+  "камчатский":      { lat: 53.01, lon: 158.65 },
+  "магаданская":     { lat: 59.57, lon: 150.79 },
+  "калининградская": { lat: 54.71, lon: 20.50 },
+  "крым":            { lat: 45.35, lon: 34.10 },
+};
+
+/** Находит приближённые координаты по названию региона в адресе. */
+function guessRegionCoords(fullAddress) {
+  const s = normalizeGenitiveCase(String(fullAddress || "").toLowerCase());
+  for (const [key, coords] of Object.entries(RUSSIA_REGIONS_COORDS)) {
+    if (s.includes(key)) return coords;
+  }
+  // Fallback по стране — используем столицу/центр страны.
+  // Не идеально для астрологии, но лучше чем отказ генерации.
+  const COUNTRY_FALLBACKS = {
+    "молдав":        { lat: 47.01, lon: 28.86 },  // Кишинёв
+    "молдов":        { lat: 47.01, lon: 28.86 },
+    "moldova":       { lat: 47.01, lon: 28.86 },
+    "беларус":       { lat: 53.90, lon: 27.57 },  // Минск
+    "belarus":       { lat: 53.90, lon: 27.57 },
+    "украин":        { lat: 50.45, lon: 30.52 },  // Киев
+    "ukrain":        { lat: 50.45, lon: 30.52 },
+    "казахстан":     { lat: 51.17, lon: 71.43 },  // Астана
+    "kazakhstan":    { lat: 51.17, lon: 71.43 },
+    "узбекистан":    { lat: 41.31, lon: 69.28 },  // Ташкент
+    "uzbekistan":    { lat: 41.31, lon: 69.28 },
+    "кыргызстан":    { lat: 42.87, lon: 74.59 },  // Бишкек
+    "kyrgyzstan":    { lat: 42.87, lon: 74.59 },
+    "таджикистан":   { lat: 38.56, lon: 68.77 },  // Душанбе
+    "tajikistan":    { lat: 38.56, lon: 68.77 },
+    "туркменистан":  { lat: 37.95, lon: 58.38 },  // Ашхабад
+    "turkmenistan":  { lat: 37.95, lon: 58.38 },
+    "грузи":         { lat: 41.72, lon: 44.79 },  // Тбилиси
+    "georgia":       { lat: 41.72, lon: 44.79 },
+    "армени":        { lat: 40.18, lon: 44.51 },  // Ереван
+    "armenia":       { lat: 40.18, lon: 44.51 },
+    "азербайджан":   { lat: 40.41, lon: 49.87 },  // Баку
+    "azerbaijan":    { lat: 40.41, lon: 49.87 },
+    "латви":         { lat: 56.95, lon: 24.11 },  // Рига
+    "latvia":        { lat: 56.95, lon: 24.11 },
+    "литв":          { lat: 54.69, lon: 25.28 },  // Вильнюс
+    "lithuania":     { lat: 54.69, lon: 25.28 },
+    "эстони":        { lat: 59.44, lon: 24.75 },  // Таллин
+    "estonia":       { lat: 59.44, lon: 24.75 },
+    "россия":        { lat: 55.75, lon: 37.62 },  // Москва
+    "russia":        { lat: 55.75, lon: 37.62 },
+  };
+  for (const [key, coords] of Object.entries(COUNTRY_FALLBACKS)) {
+    if (s.includes(key)) return { ...coords, approximate: true };
+  }
+  return null;
+}
+
+// ─── Основной fetch к Nominatim ─────────────────────────────────────────────
+async function fetchOne(query) {
+  const params = new URLSearchParams({ q: query, format: "json", limit: "1" });
+  try {
+    const res = await fetch(`${NOMINATIM_URL}?${params}`, {
+      headers: { "User-Agent": "YupSoulBot/1.0 (astro birth place)" },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const first = Array.isArray(data) ? data[0] : null;
+    if (!first || first.lat == null || first.lon == null) return null;
+    return { lat: Number(first.lat), lon: Number(first.lon), display_name: first.display_name };
+  } catch (e) {
+    console.warn("[geocode] fetchOne error:", e?.message);
+    return null;
+  }
+}
+
+const DELAY = 1100; // Nominatim policy: 1 req/sec
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Google Geocoding API — приоритетный источник (ЗАКОН №30). Возвращает { lat, lon, display_name } или null. */
+async function fetchGoogleGeocode(address) {
+  const key = typeof process !== "undefined" && process.env && (process.env.GOOGLE_GEOCODING_API_KEY || process.env.GOOGLE_MAPS_API_KEY);
+  if (!key || !address || !String(address).trim()) return null;
+  const q = String(address).trim();
+  try {
+    const url = `${GOOGLE_GEOCODING_URL}?address=${encodeURIComponent(q)}&key=${encodeURIComponent(key)}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") return null;
+    const first = data.results?.[0];
+    if (!first?.geometry?.location) return null;
+    const lat = Number(first.geometry.location.lat);
+    const lon = Number(first.geometry.location.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    console.log(`[geocode] [google] "${q}" → ${lat},${lon}`);
+    return { lat, lon, display_name: first.formatted_address || q };
+  } catch (e) {
+    console.warn("[geocode] Google Geocoding error:", e?.message);
+    return null;
+  }
+}
+
+/**
+ * @param {string} birthplace
+ * @returns {Promise<{ lat: number, lon: number, display_name?: string, approximate?: boolean } | null>}
+ */
+export async function geocode(birthplace) {
+  const q = String(birthplace || "").trim();
+  if (!q) return null;
+
+  const tried = new Set();
+  async function tryQuery(label, query) {
+    if (!query || tried.has(query)) return null;
+    tried.add(query);
+    console.log(`[geocode] [${label}] "${query}"`);
+    const r = await fetchOne(query);
+    if (r) console.log(`[geocode] [${label}] OK: ${r.lat},${r.lon}`);
+    return r;
+  }
+
+  try {
+    // 0. Google Geocoding (ЗАКОН №30 — приоритет по точности при наличии ключа)
+    let result = await fetchGoogleGeocode(q);
+    if (result) return result;
+    const normalizedEarly = normalizeAddress(q);
+    if (normalizedEarly !== q) {
+      result = await fetchGoogleGeocode(normalizedEarly);
+      if (result) return result;
+    }
+    const shortEarly = shortenForFallback(q);
+    if (shortEarly && shortEarly !== q) {
+      result = await fetchGoogleGeocode(shortEarly);
+      if (result) return result;
+    }
+
+    // 1. Оригинал (Nominatim)
+    result = await tryQuery("original", q);
+    if (result) return result;
+
+    // 2. Нормализованный адрес (убрать префиксы, исправить падеж)
+    const normalized = normalizeAddress(q);
+    if (normalized !== q) {
+      await sleep(DELAY);
+      result = await tryQuery("normalized", normalized);
+      if (result) return result;
+    }
+
+    // 3. Укороченный: «нас.пункт, страна»
+    const short = shortenForFallback(q);
+    if (short) {
+      await sleep(DELAY);
+      result = await tryQuery("short", short);
+      if (result) return result;
+
+      // 3а. Алиас (Киев → Kyiv и т.д.)
+      const alias = aliasForNominatim(short);
+      if (alias) {
+        await sleep(DELAY);
+        result = await tryQuery("alias", alias);
+        if (result) return result;
+      }
+
+      // 3б. Транслитерация для российских городов
+      const latinRu = toLatinRussiaQuery(short);
+      if (latinRu) {
+        await sleep(DELAY);
+        result = await tryQuery("latin-ru", latinRu);
+        if (result) return result;
+      }
+
+      // 3в. Транслитерация для городов Беларуси
+      const latinBy = toLatinBelarusQuery(short);
+      if (latinBy) {
+        await sleep(DELAY);
+        result = await tryQuery("latin-by", latinBy);
+        if (result) return result;
+      }
+    }
+
+    // 3.5. Убираем дублирующие латинские названия и почтовые индексы
+    const cleanParts = q.split(",").map(p => p.trim()).filter(Boolean)
+      .filter(p => !/^[A-Z]{0,3}-?\d{3,6}$/.test(p))        // MD-3034, 123456
+      .filter(p => !/^[a-zA-ZÀ-ž\s-]+$/.test(p) || !/[а-яА-ЯёЁ]/.test(q.split(",")[0])); // латинский дубль если первая часть кириллическая
+    // Если фильтрация убрала всё — вернём хотя бы первую + последнюю часть
+    const cleanQ = cleanParts.length > 0
+      ? cleanParts.join(", ")
+      : [q.split(",")[0].trim(), q.split(",").pop().trim()].filter(Boolean).join(", ");
+    if (cleanQ !== q && cleanQ !== normalized && cleanQ !== short) {
+      await sleep(DELAY);
+      result = await tryQuery("cleaned", cleanQ);
+      if (result) return result;
+    }
+
+    // 4. Только название нас.пункта (без региона и страны)
+    const parts = q.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      const justCity = extractCityName(parts[0]);
+      if (justCity && justCity !== q) {
+        await sleep(DELAY);
+        result = await tryQuery("city-only", justCity);
+        if (result) return result;
+
+        // 4а. Транслитерация просто города + Russia
+        const latinCity = toLatinRussiaQuery(`${justCity}, Россия`);
+        if (latinCity) {
+          await sleep(DELAY);
+          result = await tryQuery("city-latin", latinCity);
+          if (result) return result;
+        }
+
+        // 4б. Транслитерация просто города + Belarus
+        const latinCityBy = toLatinBelarusQuery(`${justCity}, Беларусь`);
+        if (latinCityBy) {
+          await sleep(DELAY);
+          result = await tryQuery("city-latin-by", latinCityBy);
+          if (result) return result;
+        }
+      }
+    }
+
+    // 5. Алиас для оригинала
+    const origAlias = aliasForNominatim(q);
+    if (origAlias) {
+      await sleep(DELAY);
+      result = await tryQuery("orig-alias", origAlias);
+      if (result) return result;
+    }
+
+    // 6. Попытка нормализованного — только нас.пункт из нормализованной версии
+    if (normalized !== q) {
+      const normParts = normalized.split(",").map((p) => p.trim()).filter(Boolean);
+      if (normParts.length > 0) {
+        const normCity = normParts[0];
+        if (normCity !== q && normCity !== (parts[0] || "")) {
+          const latinNormRu = toLatinRussiaQuery(`${normCity}, Россия`);
+          if (latinNormRu) {
+            await sleep(DELAY);
+            result = await tryQuery("norm-city-latin-ru", latinNormRu);
+            if (result) return result;
+          }
+          const latinNormBy = toLatinBelarusQuery(`${normCity}, Беларусь`);
+          if (latinNormBy) {
+            await sleep(DELAY);
+            result = await tryQuery("norm-city-latin-by", latinNormBy);
+            if (result) return result;
+          }
+        }
+      }
+    }
+
+    // 6.5. Photon (Komoot) — второй геокодер на OSM, часто находит то, что не нашёл Nominatim
+    const PHOTON_URL = "https://photon.komoot.io/api/";
+    async function tryPhoton(query) {
+      if (!query || tried.has("photon:" + query)) return null;
+      tried.add("photon:" + query);
+      try {
+        const res = await fetch(`${PHOTON_URL}?q=${encodeURIComponent(query)}&limit=1`, {
+          headers: { "Accept": "application/json" },
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const feat = data?.features?.[0];
+        const coords = feat?.geometry?.coordinates; // [lon, lat]
+        if (Array.isArray(coords) && coords.length >= 2) {
+          const lon = Number(coords[0]);
+          const lat = Number(coords[1]);
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            console.log(`[geocode] [photon] "${query}" → ${lat},${lon}`);
+            return { lat, lon, display_name: feat?.properties?.name || query };
+          }
+        }
+      } catch (e) {
+        console.warn("[geocode] Photon error:", e?.message);
+      }
+      return null;
+    }
+    result = await tryPhoton(q);
+    if (result) return result;
+    const shortForPhoton = shortenForFallback(q) || q;
+    if (shortForPhoton !== q) {
+      await sleep(DELAY);
+      result = await tryPhoton(shortForPhoton);
+      if (result) return result;
+    }
+
+    // 7. Last-resort: приближённые координаты по региону
+    const approxCoords = guessRegionCoords(q);
+    if (approxCoords) {
+      console.warn(`[geocode] Не найдено точно — используем приближённые координаты для "${q}": ${approxCoords.lat},${approxCoords.lon}`);
+      return { ...approxCoords, approximate: true, display_name: q };
+    }
+
+    console.warn(`[geocode] Геокодинг полностью не удался для: "${q}"`);
+    return null;
+  } catch (err) {
+    console.error("[geocode] unexpected error:", err.message);
+    return null;
+  }
+}
