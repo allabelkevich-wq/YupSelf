@@ -133,7 +133,24 @@ export async function generateImage(prompt, imageConfig = {}) {
 
   const model = imageConfig.quality === "fast" ? IMAGE_MODEL_FLASH : IMAGE_MODEL_PRO;
 
-  // Attempt 1: OpenRouter
+  // Attempt 1: laozhang.ai (primary — cheaper, $0.05 vs $0.134)
+  if (LAOZHANG_API_KEY) {
+    try {
+      const laoModel = imageConfig.quality === "fast" ? "gemini-2.5-flash-image" : IMAGE_MODEL_FALLBACK;
+      const result = await _callImageApi(
+        LAOZHANG_URL,
+        LAOZHANG_API_KEY,
+        laoModel,
+        prompt,
+        config
+      );
+      if (result) return result;
+    } catch (err) {
+      console.warn("[image] laozhang failed:", err.message);
+    }
+  }
+
+  // Attempt 2: OpenRouter (fallback)
   try {
     const result = await _callImageApi(
       OPENROUTER_URL,
@@ -144,23 +161,7 @@ export async function generateImage(prompt, imageConfig = {}) {
     );
     if (result) return result;
   } catch (err) {
-    console.warn("[image] OpenRouter failed:", err.message);
-  }
-
-  // Attempt 2: laozhang.ai fallback
-  if (LAOZHANG_API_KEY) {
-    try {
-      const result = await _callImageApi(
-        LAOZHANG_URL,
-        LAOZHANG_API_KEY,
-        IMAGE_MODEL_FALLBACK,
-        prompt,
-        config
-      );
-      if (result) return result;
-    } catch (err) {
-      console.warn("[image] laozhang fallback failed:", err.message);
-    }
+    console.warn("[image] OpenRouter fallback failed:", err.message);
   }
 
   throw new Error("All image generation APIs failed");
@@ -323,6 +324,12 @@ function _extractImage(data) {
   // Format 2: String content
   if (typeof message.content === "string") {
     const content = message.content.trim();
+
+    // Markdown image: ![image](data:image/jpeg;base64,...) — laozhang format
+    const mdMatch = content.match(/!\[.*?\]\((data:image\/\w+;base64,[A-Za-z0-9+/=]+)\)/);
+    if (mdMatch) {
+      return { imageBase64: mdMatch[1].replace(/^data:image\/\w+;base64,/, "") };
+    }
 
     // base64 data URI
     if (content.startsWith("data:image")) {
