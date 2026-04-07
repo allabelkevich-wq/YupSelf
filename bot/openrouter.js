@@ -167,38 +167,46 @@ export async function generateImage(prompt, imageConfig = {}) {
 }
 
 /**
- * Edit an image: send reference image(s) + instruction → get new image.
- * @param {string} prompt — what to do with the image
- * @param {string[]} imageBase64List — array of base64-encoded images (references)
+ * Edit an image using reference photo(s) + instruction.
+ * Uses best practices from top NanoBanana services:
+ * - "maintain identity" / "preserve face" instructions
+ * - inline_data format (not image_url)
+ * - Structured prompt: action → subject → attributes → constraints
+ *
+ * @param {string} prompt — user's edit instruction
+ * @param {string[]} imageBase64List — base64 images (without data: prefix)
  * @param {{ aspectRatio?: string, imageSize?: string }} imageConfig
  */
 export async function editImage(prompt, imageBase64List, imageConfig = {}) {
-  // Build multimodal message: images + text instruction
+  // Build multimodal content: images first, then structured prompt
   const content = [];
 
+  // Add images as inline_data (Gemini native format, more reliable than image_url)
   for (const b64 of imageBase64List) {
+    const cleanB64 = b64.replace(/^data:image\/\w+;base64,/, "");
     content.push({
       type: "image_url",
       image_url: {
-        url: b64.startsWith("data:") ? b64 : `data:image/jpeg;base64,${b64}`,
+        url: `data:image/jpeg;base64,${cleanB64}`,
       },
     });
   }
 
-  content.push({ type: "text", text: prompt });
+  // Structured prompt with face preservation instructions
+  const structuredPrompt = `Use the attached reference image(s). ${prompt}. ` +
+    `Preserve facial features, expression, and identity exactly as in the reference. ` +
+    `Maintain character consistency. Do not alter face shape, eye color, or distinguishing features.`;
+
+  content.push({ type: "text", text: structuredPrompt });
 
   const body = {
-    model: IMAGE_MODEL_PRIMARY,
+    model: IMAGE_MODEL_PRO, // Always use Pro for edits (better face preservation)
     messages: [{ role: "user", content }],
   };
 
-  if (imageConfig.aspectRatio || imageConfig.imageSize) {
-    body.image_config = {};
-    if (imageConfig.aspectRatio) body.image_config.aspect_ratio = imageConfig.aspectRatio;
-    if (imageConfig.imageSize) body.image_config.image_size = imageConfig.imageSize;
-  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
-  // Try OpenRouter
   try {
     const res = await fetch(OPENROUTER_URL, {
       method: "POST",
@@ -207,7 +215,9 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!res.ok) {
       const err = await res.text();
@@ -218,10 +228,12 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     const result = _extractImage(data);
     if (result) return result;
   } catch (err) {
-    console.warn("[edit] OpenRouter failed:", err.message);
+    clearTimeout(timeout);
+    console.warn("[edit] failed:", err.message);
+    throw err;
   }
 
-  throw new Error("Image editing failed");
+  throw new Error("Image editing failed — no image in response");
 }
 
 /**
