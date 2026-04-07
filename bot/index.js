@@ -523,7 +523,17 @@ const app = express();
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false }));
+// Force no-cache headers on all static files
+app.use((req, res, next) => {
+  if (req.path === "/" || req.path.endsWith(".html")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+  }
+  next();
+});
+app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false, lastModified: false }));
 
 app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
 

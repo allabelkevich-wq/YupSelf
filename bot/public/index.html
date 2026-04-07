@@ -1536,27 +1536,26 @@
                 aspectRatio: sel("aspect") || "1:1",
             });
 
-            // Retry up to 3 times (slow mobile networks can drop first request)
+            // Send with retry
             let jobId = null;
-            for (let attempt = 0; attempt < 3; attempt++) {
+            let lastErr = null;
+            for (let attempt = 0; attempt < 3 && !jobId; attempt++) {
+                if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
                 try {
                     const res = await fetch(`${API}/api/astro/generate`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: payload,
                     });
-                    if (!res.ok) {
-                        const errBody = await res.json().catch(() => ({}));
-                        throw new Error(errBody.error || "Server error");
-                    }
-                    const astroData = await res.json();
-                    if (astroData.jobId) { jobId = astroData.jobId; break; }
-                } catch (e) {
-                    if (attempt === 2) throw e;
-                    await new Promise(r => setTimeout(r, 2000));
-                }
+                    const text = await res.text();
+                    try {
+                        const json = JSON.parse(text);
+                        if (json.jobId) jobId = json.jobId;
+                        else lastErr = json.error || "No jobId in response";
+                    } catch { lastErr = "Invalid response: " + text.slice(0, 100); }
+                } catch (e) { lastErr = e.message; }
             }
-            if (!jobId) throw new Error("Не удалось запустить генерацию");
+            if (!jobId) throw new Error(lastErr || "Не удалось запустить генерацию");
 
             // Poll
             const data = await pollJob(jobId);
