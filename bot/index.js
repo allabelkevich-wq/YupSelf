@@ -791,6 +791,7 @@ app.post("/api/astro/generate", async (req, res) => {
         imageUrl: result.imageUrl,
         astroPrompt: result.astroPrompt,
         snapshotSummary: result.snapshotSummary,
+        analysis: result.analysis,
       });
       // Save to DB
       if (telegramId) {

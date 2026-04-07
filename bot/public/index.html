@@ -683,8 +683,19 @@
             <div class="ref-previews" id="astroFacePreview"></div>
         </div>
 
-        <!-- Birth form -->
-        <div style="display:flex; flex-direction:column; gap:10px;">
+        <!-- Birth data summary (shown when data exists) -->
+        <div id="astroSavedSummary" style="display:none; padding:12px; background:rgba(245,158,11,0.06); border:1px solid rgba(245,158,11,0.15); border-radius:14px; margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div id="astroSavedName" style="font-size:14px; font-weight:700; color:var(--accent-1);"></div>
+                    <div id="astroSavedInfo" style="font-size:12px; color:var(--text-secondary); margin-top:2px;"></div>
+                </div>
+                <button id="astroEditBtn" style="padding:5px 12px; border-radius:9999px; border:1px solid var(--border); background:transparent; color:var(--text-secondary); font-size:11px; cursor:pointer; font-family:'Manrope',sans-serif;">Изменить</button>
+            </div>
+        </div>
+
+        <!-- Birth form (hidden when data saved) -->
+        <div id="astroFormFields" style="display:flex; flex-direction:column; gap:10px;">
             <input type="text" id="astroName" placeholder="Имя" style="width:100%; padding:12px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-primary); font-family:'Manrope',sans-serif; font-size:14px; outline:none;">
 
             <div style="display:flex; gap:6px;">
@@ -718,7 +729,7 @@
             </select>
 
             <input type="text" id="astroIntention" placeholder="Намерение (опционально): Покажи мой внутренний мир" style="width:100%; padding:12px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-primary); font-family:'Manrope',sans-serif; font-size:14px; outline:none;">
-        </div>
+        </div><!-- /astroFormFields -->
 
         <button class="gen-btn" id="astroGenBtn" style="margin-top:16px;">Создать портрет по звёздам</button>
 
@@ -732,6 +743,21 @@
         <div class="result" id="astroResult">
             <img id="astroResultImg" class="result-image" alt="" style="width:100%; border-radius:20px;">
             <div style="text-align:center; margin-top:8px; font-size:12px; color:var(--text-secondary);" id="astroSummary"></div>
+            <!-- Text analysis / расшифровка -->
+            <div id="astroAnalysis" style="margin-top:12px; padding:14px; background:rgba(245,158,11,0.06); border:1px solid rgba(245,158,11,0.12); border-radius:14px; font-size:13px; color:var(--text-secondary); line-height:1.6; display:none;"></div>
+
+            <!-- Rating -->
+            <div style="text-align:center; margin-top:12px;">
+                <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Оцени результат</div>
+                <div id="astroRating" style="display:flex; justify-content:center; gap:8px;">
+                    <span class="rate-star" data-r="1" style="font-size:24px; cursor:pointer; opacity:0.3;">★</span>
+                    <span class="rate-star" data-r="2" style="font-size:24px; cursor:pointer; opacity:0.3;">★</span>
+                    <span class="rate-star" data-r="3" style="font-size:24px; cursor:pointer; opacity:0.3;">★</span>
+                    <span class="rate-star" data-r="4" style="font-size:24px; cursor:pointer; opacity:0.3;">★</span>
+                    <span class="rate-star" data-r="5" style="font-size:24px; cursor:pointer; opacity:0.3;">★</span>
+                </div>
+            </div>
+
             <div class="result-bar">
                 <button class="rbtn accent" id="astroDlBtn">Скачать</button>
                 <button class="rbtn" id="astroRetryBtn">Другой вариант</button>
@@ -1484,6 +1510,26 @@ window.addEventListener("unhandledrejection", function(e) {
         }
     }
 
+    // Show/hide accordion based on saved data
+    function updateAstroAccordion() {
+        const raw = storage.get("yupself_astro");
+        if (!raw) { showAstroForm(); return; }
+        try {
+            const d = JSON.parse(raw);
+            if (!d.day || !d.month || !d.year || !d.place) { showAstroForm(); return; }
+            const months = ["","Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"];
+            $("#astroSavedName").textContent = d.name || "Без имени";
+            $("#astroSavedInfo").textContent = `${d.day} ${months[Number(d.month)]} ${d.year} · ${d.place}${d.time ? " · " + d.time : ""}${d.gender === "male" ? " · М" : d.gender === "female" ? " · Ж" : ""}`;
+            $("#astroSavedSummary").style.display = "block";
+            $("#astroFormFields").style.display = "none";
+        } catch { showAstroForm(); }
+    }
+
+    function showAstroForm() {
+        $("#astroSavedSummary").style.display = "none";
+        $("#astroFormFields").style.display = "flex";
+    }
+
     // ── Astro Tab Logic ──────────────────────────────────
     // Populate date selects
     const dayS = $("#astroDay"), monthS = $("#astroMonth"), yearS = $("#astroYear");
@@ -1495,6 +1541,10 @@ window.addEventListener("unhandledrejection", function(e) {
     // Load saved data on page load
     loadAstroData();
     prefillFromTelegram();
+    updateAstroAccordion();
+
+    // Edit button — show form again
+    $("#astroEditBtn").addEventListener("click", showAstroForm);
 
     // Birthplace autocomplete
     let placeTimer = null;
@@ -1556,8 +1606,9 @@ window.addEventListener("unhandledrejection", function(e) {
         if (!place) { alert("Укажи место рождения"); return; }
         if (!$("#astroGender").value) { alert("Укажи пол"); return; }
 
-        // Save form data for next time
+        // Save form data for next time + collapse form
         saveAstroData();
+        updateAstroAccordion();
 
         const birthdate = `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
         const btn = $("#astroGenBtn");
@@ -1633,6 +1684,10 @@ window.addEventListener("unhandledrejection", function(e) {
                 $("#astroResultImg").src = data.imageUrl;
             }
             $("#astroSummary").textContent = data.snapshotSummary || "";
+            if (data.analysis) {
+                $("#astroAnalysis").textContent = data.analysis;
+                $("#astroAnalysis").style.display = "block";
+            }
             $("#astroPromptBody").textContent = data.astroPrompt || "";
             $("#astroResult").classList.add("visible");
             $("#astroResult").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1661,6 +1716,18 @@ window.addEventListener("unhandledrejection", function(e) {
     $("#astroShareBtn").addEventListener("click", () => {
         if (tg) tg.switchInlineQuery("Мой визуальный портрет по звёздам в YupSelf!", ["users"]);
         else { navigator.clipboard.writeText("https://t.me/YupSelf_bot"); alert("Ссылка скопирована!"); }
+    });
+
+    // Rating stars
+    $$(".rate-star").forEach(star => {
+        star.addEventListener("click", () => {
+            const r = Number(star.dataset.r);
+            $$(".rate-star").forEach(s => {
+                s.style.opacity = Number(s.dataset.r) <= r ? "1" : "0.3";
+                s.style.color = Number(s.dataset.r) <= r ? "var(--accent-1)" : "";
+            });
+            // TODO: save rating to Supabase
+        });
     });
 
     // Referral copy

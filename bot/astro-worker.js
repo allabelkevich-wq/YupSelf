@@ -250,6 +250,32 @@ export async function generateAstroImage(params) {
 
   console.log(`[astro] Visual prompt (${imagePrompt.length} chars): "${imagePrompt.slice(0, 100)}..."`);
 
+  // ── Step 3b: DeepSeek → text analysis (расшифровка) ─────
+  console.log(`[astro] Step 3b: Generating text analysis...`);
+  let analysis = "";
+  try {
+    const analysisRes = await fetch(DEEPSEEK_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: `Ты — мудрый визуальный астролог. Получив натальную карту, напиши КРАТКУЮ расшифровку на русском (3-5 предложений): какой визуальный стиль подходит этому человеку и почему. Говори как мудрый друг, без астрологических терминов. Не упоминай планеты, знаки, дома.` },
+          { role: "user", content: userMessage },
+        ],
+        max_tokens: 300,
+        temperature: 0.8,
+      }),
+    });
+    if (analysisRes.ok) {
+      const aData = await analysisRes.json();
+      analysis = aData.choices?.[0]?.message?.content?.trim() || "";
+    }
+  } catch (e) { console.warn("[astro] analysis failed:", e.message); }
+
   // ── Step 4: Generate image ──────────────────────────────
   console.log(`[astro] Step 4: Generating image...`);
 
@@ -274,6 +300,7 @@ export async function generateAstroImage(params) {
     imageUrl: result.imageUrl || null,
     astroPrompt: imagePrompt,
     snapshotSummary,
+    analysis,
     astroSnapshot: astro.snapshot_json,
   };
 }
