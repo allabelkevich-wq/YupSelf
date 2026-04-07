@@ -749,6 +749,7 @@ app.get("/api/payment/pending/:telegramId", async (req, res) => {
 app.post("/api/astro/generate", async (req, res) => {
   try {
     const { name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, intention, faceId, telegramId, aspectRatio } = req.body;
+    console.log("[astro] request:", JSON.stringify({ name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, faceId, aspectRatio }));
     if (!birthdate || !birthplace) return res.status(400).json({ error: "birthdate and birthplace required" });
 
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

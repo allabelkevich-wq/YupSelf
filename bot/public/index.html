@@ -1531,9 +1531,13 @@
                 }),
             });
 
-            if (!res.ok) throw new Error("API error " + res.status);
-            const { jobId } = await res.json();
-            if (!jobId) throw new Error("No jobId");
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                throw new Error(errBody.error || "API error " + res.status);
+            }
+            const astroData = await res.json();
+            if (!astroData.jobId) throw new Error(astroData.error || "No jobId");
+            const jobId = astroData.jobId;
 
             // Poll
             const data = await pollJob(jobId);
