@@ -572,19 +572,24 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
 // In-memory cache for fast reads during active generation.
 const jobCache = new Map();
 
-// Check if jobs table exists (graceful: works without it using cache only)
+// Lazy check: verify jobs table on first write, retry periodically
 let jobsTableReady = false;
-(async () => {
+let jobsTableChecked = false;
+async function ensureJobsTable() {
+  if (jobsTableReady) return true;
+  if (jobsTableChecked && Date.now() - jobsTableChecked < 60000) return false; // retry every 60s
+  jobsTableChecked = Date.now();
   try {
     const { error } = await supabase.from("jobs").select("job_id").limit(1);
-    if (!error) { jobsTableReady = true; console.log("[jobs] Supabase table ready"); }
-    else console.warn("[jobs] Table not found, using in-memory only. Create table in Supabase SQL Editor.");
+    if (!error) { jobsTableReady = true; console.log("[jobs] Supabase table ready"); return true; }
+    console.warn("[jobs] Table not found:", error.message);
   } catch {}
-})();
+  return false;
+}
 
 async function setJob(jobId, data) {
   jobCache.set(jobId, data);
-  if (!jobsTableReady) return;
+  if (!(await ensureJobsTable())) return;
   try {
     const row = {
       job_id: jobId,
@@ -621,7 +626,7 @@ async function getJob(jobId) {
   if (cached) return cached;
 
   // Slow path: read from Supabase (survives restarts)
-  if (!jobsTableReady) return null;
+  if (!(await ensureJobsTable())) return null;
   try {
     const { data } = await supabase
       .from("jobs")
