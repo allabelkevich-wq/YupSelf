@@ -732,6 +732,8 @@
         </div><!-- /astroFormFields -->
 
         <button class="gen-btn" id="astroGenBtn" style="margin-top:16px;">Создать портрет по звёздам</button>
+        <!-- Debug log (visible, removable later) -->
+        <pre id="astroDebugLog" style="margin-top:8px; padding:8px; background:rgba(0,0,0,0.5); border-radius:8px; font-size:10px; color:#7f7; max-height:150px; overflow-y:auto; display:none; white-space:pre-wrap; word-break:break-all;"></pre>
 
         <!-- Astro loading -->
         <div class="loading-wrap" id="astroLoading">
@@ -952,14 +954,16 @@ window.addEventListener("unhandledrejection", function(e) {
     async function pollJob(jobId, maxAttempts) {
         const max = maxAttempts || 60;
         let failures = 0;
-        console.log("[poll] start", jobId, "max:", max);
+        const dbg = $("#astroDebugLog");
+        function plog(m) { if (dbg) { dbg.textContent += new Date().toLocaleTimeString() + " " + m + "\n"; dbg.scrollTop = dbg.scrollHeight; } console.log("[poll]", m); }
+        plog("poll start " + jobId + " max:" + max);
         for (let i = 0; i < max; i++) {
             await new Promise(r => setTimeout(r, 3000));
             try {
                 const res = await fetch(`${API}/api/job/${jobId}`);
                 if (!res.ok) {
                     failures++;
-                    console.warn("[poll]", i, "not ok:", res.status, "failures:", failures);
+                    plog("#" + i + " HTTP " + res.status + " fail:" + failures);
                     if (failures > 5) throw new Error("Server error (poll " + failures + "x " + res.status + ")");
                     continue;
                 }
@@ -1659,26 +1663,32 @@ window.addEventListener("unhandledrejection", function(e) {
             // Send with retry
             let jobId = null;
             let lastErr = null;
-            console.log("[astro] payload size:", payload.length, "face:", !!faceBase64, "faceLen:", (faceBase64||"").length);
+            const dbg = $("#astroDebugLog");
+            dbg.style.display = "block";
+            dbg.textContent = "";
+            function dlog(m) { dbg.textContent += new Date().toLocaleTimeString() + " " + m + "\n"; dbg.scrollTop = dbg.scrollHeight; console.log("[astro]", m); }
+
+            dlog("API: " + API);
+            dlog("payload: " + payload.length + " bytes, face: " + !!faceBase64 + " (" + (faceBase64||"").length + " chars)");
             for (let attempt = 0; attempt < 3 && !jobId; attempt++) {
                 if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
                 try {
-                    console.log("[astro] attempt", attempt + 1, "POST to", API + "/api/astro/generate");
+                    dlog("attempt " + (attempt+1) + " POST...");
                     const res = await fetch(`${API}/api/astro/generate`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: payload,
                     });
-                    console.log("[astro] response status:", res.status);
+                    dlog("HTTP " + res.status);
                     const text = await res.text();
-                    console.log("[astro] response body:", text.slice(0, 200));
+                    dlog("body: " + text.slice(0, 200));
                     try {
                         const json = JSON.parse(text);
-                        if (json.jobId) jobId = json.jobId;
+                        if (json.jobId) { jobId = json.jobId; dlog("jobId: " + jobId); }
                         else lastErr = json.error || "No jobId: " + text.slice(0, 100);
                     } catch { lastErr = "Invalid JSON: " + text.slice(0, 100); }
                 } catch (e) {
-                    console.error("[astro] fetch error:", e.message, e.name);
+                    dlog("FETCH ERROR: " + e.name + ": " + e.message);
                     lastErr = e.message;
                 }
             }
