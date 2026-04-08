@@ -567,17 +567,100 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
   }
 });
 
-// ── Async job store ──────────────────────────────────────────────────
-const jobs = new Map();
+// ── Persistent job store (Supabase) ──────────────────────────────────
+// Jobs survive server restarts — no more lost generations during deploys.
+// In-memory cache for fast reads during active generation.
+const jobCache = new Map();
+
+// Check if jobs table exists (graceful: works without it using cache only)
+let jobsTableReady = false;
+(async () => {
+  try {
+    const { error } = await supabase.from("jobs").select("job_id").limit(1);
+    if (!error) { jobsTableReady = true; console.log("[jobs] Supabase table ready"); }
+    else console.warn("[jobs] Table not found, using in-memory only. Create table in Supabase SQL Editor.");
+  } catch {}
+})();
+
+async function setJob(jobId, data) {
+  jobCache.set(jobId, data);
+  if (!jobsTableReady) return;
+  try {
+    const row = {
+      job_id: jobId,
+      status: data.status,
+      type: data.type || "generate",
+      error: data.error || null,
+      prompt: data.prompt || data.astroPrompt || null,
+      image_url: null,
+      result_json: null,
+      updated_at: new Date().toISOString(),
+    };
+    if (data.status === "done") {
+      let imageUrl = data.imageUrl || null;
+      if (data.imageBase64 && !imageUrl) {
+        imageUrl = await uploadImage(data.imageBase64, `${jobId}.png`);
+      }
+      row.image_url = imageUrl;
+      row.result_json = JSON.stringify({
+        snapshotSummary: data.snapshotSummary || null,
+        analysis: data.analysis || null,
+        astroPrompt: data.astroPrompt || null,
+      });
+      data.imageUrl = imageUrl || data.imageUrl;
+    }
+    await supabase.from("jobs").upsert(row, { onConflict: "job_id" });
+  } catch (e) {
+    console.error("[jobs db]", e.message);
+  }
+}
+
+async function getJob(jobId) {
+  // Fast path: in-memory cache
+  const cached = jobCache.get(jobId);
+  if (cached) return cached;
+
+  // Slow path: read from Supabase (survives restarts)
+  if (!jobsTableReady) return null;
+  try {
+    const { data } = await supabase
+      .from("jobs")
+      .select("*")
+      .eq("job_id", jobId)
+      .single();
+    if (!data) return null;
+
+    const result = {
+      status: data.status,
+      type: data.type,
+      error: data.error,
+      prompt: data.prompt,
+      imageUrl: data.image_url,
+    };
+    if (data.result_json) {
+      try { Object.assign(result, JSON.parse(data.result_json)); } catch {}
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+// Clean old cache entries every 10 min
+setInterval(() => {
+  if (jobCache.size > 100) {
+    const entries = [...jobCache.entries()];
+    entries.slice(0, entries.length - 50).forEach(([k]) => jobCache.delete(k));
+  }
+}, 600000);
 
 app.post("/api/generate", async (req, res) => {
   try {
     const { prompt, style, aspectRatio, imageSize, quality } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
 
-    // Create job and return immediately
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    jobs.set(jobId, { status: "processing", prompt });
+    await setJob(jobId, { status: "processing", prompt });
 
     console.log(`[job ${jobId}] generating (${quality || "pro"}): "${prompt.slice(0, 80)}..."`);
     const genPromise = generateImage(prompt, {
@@ -593,30 +676,25 @@ app.post("/api/generate", async (req, res) => {
 
     Promise.race([genPromise, timeoutPromise]).then(async (result) => {
       console.log(`[job ${jobId}] done! base64: ${(result.imageBase64||'').length} chars`);
-      jobs.set(jobId, {
+      await setJob(jobId, {
         status: "done",
         prompt,
         imageBase64: result.imageBase64 || null,
         imageUrl: result.imageUrl || null,
       });
-      // Upload image + save to history
       if (telegramId) {
         try {
-          const imageUrl = await uploadImage(result.imageBase64, `${jobId}.png`);
           await saveGeneration(telegramId, {
             prompt,
             aspectRatio: aspectRatio || "1:1",
             imageSize: imageSize || "1K",
-            imageUrl,
+            imageUrl: (await getJob(jobId))?.imageUrl || null,
           });
-          console.log(`[job ${jobId}] saved to history, url: ${imageUrl ? "yes" : "no"}`);
         } catch (e) { console.error("[save]", e.message); }
       }
-      setTimeout(() => jobs.delete(jobId), 300000);
-    }).catch(err => {
+    }).catch(async (err) => {
       console.error(`[job ${jobId}] error:`, err.message);
-      jobs.set(jobId, { status: "error", error: err.message });
-      setTimeout(() => jobs.delete(jobId), 60000);
+      await setJob(jobId, { status: "error", error: err.message });
     });
 
     res.json({ jobId });
@@ -625,15 +703,15 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-app.get("/api/job/:id", (req, res) => {
-  const job = jobs.get(req.params.id);
+app.get("/api/job/:id", async (req, res) => {
+  const job = await getJob(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
   res.json(job);
 });
 
 // Download image as file (works in Telegram WebView)
-app.get("/api/download/:id", (req, res) => {
-  const job = jobs.get(req.params.id);
+app.get("/api/download/:id", async (req, res) => {
+  const job = await getJob(req.params.id);
   if (!job?.imageBase64) return res.status(404).send("Not found");
   const buf = Buffer.from(job.imageBase64, "base64");
   res.setHeader("Content-Type", "image/png");
@@ -765,7 +843,7 @@ app.post("/api/astro/generate", async (req, res) => {
     if (!birthdate || !birthplace) return res.status(400).json({ error: "birthdate and birthplace required" });
 
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    jobs.set(jobId, { status: "processing", type: "astro" });
+    await setJob(jobId, { status: "processing", type: "astro" });
 
     console.log(`[astro job ${jobId}] starting for ${name}, ${birthdate}, ${birthplace}, face: ${!!(faceBase64 || faceId)}`);
 
@@ -783,9 +861,9 @@ app.post("/api/astro/generate", async (req, res) => {
       name, birthdate, birthplace, birthtime,
       birthtimeUnknown: !!birthtimeUnknown,
       gender, intention, faceImageB64, aspectRatio: aspectRatio || "1:1",
-    }).then(result => {
+    }).then(async (result) => {
       console.log(`[astro job ${jobId}] done!`);
-      jobs.set(jobId, {
+      await setJob(jobId, {
         status: "done",
         type: "astro",
         imageBase64: result.imageBase64,
@@ -794,7 +872,6 @@ app.post("/api/astro/generate", async (req, res) => {
         snapshotSummary: result.snapshotSummary,
         analysis: result.analysis,
       });
-      // Save to DB
       if (telegramId) {
         supabase.from("astro_image_requests").insert({
           telegram_id: Number(telegramId),
@@ -806,11 +883,9 @@ app.post("/api/astro/generate", async (req, res) => {
           completed_at: new Date().toISOString(),
         }).then(() => {}).catch(e => console.error("[astro db]", e.message));
       }
-      setTimeout(() => jobs.delete(jobId), 300000);
-    }).catch(err => {
-      console.error(`[astro job ${jobId}] error:`, err.message, err.stack?.split('\n').slice(0,3).join(' | '));
-      jobs.set(jobId, { status: "error", error: err.message });
-      setTimeout(() => jobs.delete(jobId), 60000);
+    }).catch(async (err) => {
+      console.error(`[astro job ${jobId}] error:`, err.message);
+      await setJob(jobId, { status: "error", error: err.message });
     });
 
     res.json({ jobId });
@@ -869,39 +944,36 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
 
     // Async job
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    jobs.set(jobId, { status: "processing", prompt });
+    await setJob(jobId, { status: "processing", prompt });
 
     // Start edit in background
     editImage(fullPrompt, imageBase64List, {
       aspectRatio: req.body.aspectRatio || "1:1",
       imageSize: req.body.imageSize || "1K",
-    }).then(result => {
+    }).then(async (result) => {
       console.log(`[edit job ${jobId}] done!`);
-      jobs.set(jobId, {
+      await setJob(jobId, {
         status: "done",
         prompt,
         imageBase64: result.imageBase64 || null,
         imageUrl: result.imageUrl || null,
       });
-      setTimeout(() => jobs.delete(jobId), 300000);
     }).catch(async (editErr) => {
-      // Fallback to generate
       console.warn(`[edit job ${jobId}] editImage failed, fallback:`, editErr.message);
       try {
         const result = await generateImage(prompt, {
           aspectRatio: req.body.aspectRatio || "1:1",
           imageSize: req.body.imageSize || "1K",
         });
-        jobs.set(jobId, {
+        await setJob(jobId, {
           status: "done",
           prompt,
           imageBase64: result.imageBase64 || null,
           imageUrl: result.imageUrl || null,
         });
       } catch (genErr) {
-        jobs.set(jobId, { status: "error", error: genErr.message });
+        await setJob(jobId, { status: "error", error: genErr.message });
       }
-      setTimeout(() => jobs.delete(jobId), 60000);
     });
 
     res.json({ jobId });
