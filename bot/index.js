@@ -722,11 +722,22 @@ app.get("/api/job/:id", async (req, res) => {
 // Download image as file (works in Telegram WebView)
 app.get("/api/download/:id", async (req, res) => {
   const job = await getJob(req.params.id);
-  if (!job?.imageBase64) return res.status(404).send("Not found");
-  const buf = Buffer.from(job.imageBase64, "base64");
-  res.setHeader("Content-Type", "image/png");
-  res.setHeader("Content-Disposition", `attachment; filename="yupself-${req.params.id}.png"`);
-  res.send(buf);
+  if (!job) return res.status(404).send("Not found");
+
+  // If base64 in cache — serve directly
+  if (job.imageBase64) {
+    const buf = Buffer.from(job.imageBase64, "base64");
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Disposition", `attachment; filename="yupself-${req.params.id}.png"`);
+    return res.send(buf);
+  }
+
+  // If image_url (from Supabase Storage) — redirect
+  if (job.imageUrl) {
+    return res.redirect(job.imageUrl);
+  }
+
+  res.status(404).send("Not found");
 });
 
 // ── Web API: user profile / cabinet ──────────────────────────────────

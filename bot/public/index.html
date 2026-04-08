@@ -1177,14 +1177,25 @@ window.addEventListener("unhandledrejection", function(e) {
     });
     let currentJobId = null;
     $("#dlBtn").addEventListener("click", () => {
-        if (currentJobId) {
-            // Open download URL directly (works in Telegram WebView)
-            window.open(`${API}/api/download/${currentJobId}`, "_blank");
+        const url = currentJobId ? `${API}/api/download/${currentJobId}` : null;
+        if (url) {
+            // Telegram WebView: use tg.openLink (window.open is blocked)
+            if (tg?.openLink) { tg.openLink(url); }
+            else { window.location.href = url; }
         } else if (imgData) {
-            const a = document.createElement("a");
-            a.href = `data:image/png;base64,${imgData}`;
-            a.download = `yupself-${Date.now()}.png`;
-            a.click();
+            // Fallback for base64 — try blob download
+            try {
+                const byteChars = atob(imgData);
+                const byteArr = new Uint8Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+                const blob = new Blob([byteArr], { type: "image/png" });
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = blobUrl;
+                a.download = `yupself-${Date.now()}.png`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            } catch { if (tg?.openLink) tg.openLink(`${API}/api/download/${currentJobId}`); }
         }
     });
 
@@ -1728,10 +1739,29 @@ window.addEventListener("unhandledrejection", function(e) {
         $("#astroPromptToggle").textContent = $("#astroPromptBody").classList.contains("open") ? "Скрыть промт" : "Показать промт";
     });
     $("#astroDlBtn").addEventListener("click", () => {
-        const a = document.createElement("a");
-        a.href = $("#astroResultImg").src;
-        a.download = `yupself-astro-${Date.now()}.png`;
-        a.click();
+        const src = $("#astroResultImg").src;
+        // If it's a URL (not base64) — use tg.openLink or direct navigation
+        if (src.startsWith("http")) {
+            if (tg?.openLink) tg.openLink(src);
+            else window.location.href = src;
+        } else {
+            // base64 → blob download
+            try {
+                const b64 = src.replace(/^data:image\/\w+;base64,/, "");
+                const byteChars = atob(b64);
+                const byteArr = new Uint8Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+                const blob = new Blob([byteArr], { type: "image/png" });
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = blobUrl;
+                a.download = `yupself-astro-${Date.now()}.png`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            } catch {
+                if (tg?.openLink) tg.openLink(src);
+            }
+        }
     });
     $("#astroRetryBtn").addEventListener("click", () => $("#astroGenBtn").click());
     $("#astroShareBtn").addEventListener("click", () => {
