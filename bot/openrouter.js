@@ -318,25 +318,22 @@ async function _callGoogleAI(model, prompt, imageBase64) {
  * @param {{ aspectRatio?: string, imageSize?: string }} imageConfig
  */
 export async function editImage(prompt, imageBase64List, imageConfig = {}) {
-  // Build multimodal content: images first, then structured prompt
+  // Build multimodal content using inline_data (Gemini native format)
+  // laozhang requires inline_data, NOT image_url for multimodal image generation
   const content = [];
 
-  // Add images as inline_data (Gemini native format, more reliable than image_url)
   for (const b64 of imageBase64List) {
     const cleanB64 = b64.replace(/^data:image\/\w+;base64,/, "");
     content.push({
-      type: "image_url",
-      image_url: {
-        url: `data:image/jpeg;base64,${cleanB64}`,
+      type: "inline_data",
+      inline_data: {
+        mime_type: "image/jpeg",
+        data: cleanB64,
       },
     });
   }
 
-  // Structured prompt: EDIT the attached image, don't generate from scratch
-  const structuredPrompt = `IMPORTANT: Edit the attached image. Do NOT generate a new image from scratch. ` +
-    `Keep the SAME composition, colors, style, and all visual elements from the original image. ` +
-    `Only make the following change: ${prompt}. ` +
-    `The result must look like the original image with minimal modifications applied.`;
+  const structuredPrompt = `Edit this image: ${prompt}. Return the edited image.`;
 
   content.push({ type: "text", text: structuredPrompt });
 
