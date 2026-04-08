@@ -332,10 +332,11 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     });
   }
 
-  // Structured prompt with face preservation instructions
-  const structuredPrompt = `Use the attached reference image(s). ${prompt}. ` +
-    `Preserve facial features, expression, and identity exactly as in the reference. ` +
-    `Maintain character consistency. Do not alter face shape, eye color, or distinguishing features.`;
+  // Structured prompt: EDIT the attached image, don't generate from scratch
+  const structuredPrompt = `IMPORTANT: Edit the attached image. Do NOT generate a new image from scratch. ` +
+    `Keep the SAME composition, colors, style, and all visual elements from the original image. ` +
+    `Only make the following change: ${prompt}. ` +
+    `The result must look like the original image with minimal modifications applied.`;
 
   content.push({ type: "text", text: structuredPrompt });
 
