@@ -534,7 +534,10 @@ app.use((req, res, next) => {
 });
 app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false, lastModified: false }));
 
-app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+app.get("/healthz", async (_req, res) => {
+  const tableOk = await ensureJobsTable();
+  res.json({ status: "ok", jobsTable: tableOk, cacheSize: jobCache.size });
+});
 
 // ── Web API: generate image ─────────────────────────────────────────
 app.use(express.json({ limit: "5mb" }));
