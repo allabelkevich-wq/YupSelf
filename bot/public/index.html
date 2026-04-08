@@ -733,7 +733,7 @@
 
         <button class="gen-btn" id="astroGenBtn" style="margin-top:16px;">Создать портрет по звёздам</button>
         <!-- Debug log (visible, removable later) -->
-        <pre id="astroDebugLog" style="margin-top:8px; padding:8px; background:rgba(0,0,0,0.5); border-radius:8px; font-size:10px; color:#7f7; max-height:150px; overflow-y:auto; display:none; white-space:pre-wrap; word-break:break-all;"></pre>
+        <!-- debug panel removed -->
 
         <!-- Astro loading -->
         <div class="loading-wrap" id="astroLoading">
@@ -765,8 +765,7 @@
                 <button class="rbtn" id="astroRetryBtn">Другой вариант</button>
                 <button class="rbtn" id="astroShareBtn">Поделиться</button>
             </div>
-            <div class="prompt-acc" id="astroPromptToggle">Показать промт</div>
-            <div class="prompt-body" id="astroPromptBody"></div>
+            <!-- prompt display removed — users see only the image + analysis -->
         </div>
     </div>
     </div><!-- /tabAstro -->
@@ -954,8 +953,7 @@ window.addEventListener("unhandledrejection", function(e) {
     async function pollJob(jobId, maxAttempts) {
         const max = maxAttempts || 60;
         let failures = 0;
-        const dbg = $("#astroDebugLog");
-        function plog(m) { if (dbg) { dbg.textContent += new Date().toLocaleTimeString() + " " + m + "\n"; dbg.scrollTop = dbg.scrollHeight; } console.log("[poll]", m); }
+        function plog(m) { console.log("[poll]", m); }
         plog("poll start " + jobId + " max:" + max);
         for (let i = 0; i < max; i++) {
             await new Promise(r => setTimeout(r, 3000));
@@ -1176,6 +1174,7 @@ window.addEventListener("unhandledrejection", function(e) {
         } catch { alert("Поделиться: https://t.me/YupSelf_bot"); }
     });
     let currentJobId = null;
+    let currentAstroJobId = null;
     $("#dlBtn").addEventListener("click", () => {
         const url = currentJobId ? `${API}/api/download/${currentJobId}` : null;
         if (url) {
@@ -1645,7 +1644,7 @@ window.addEventListener("unhandledrejection", function(e) {
         let faceBase64 = null;
         if (astroFaceFile) {
             try {
-                const compressed = await compressImage(astroFaceFile, 1024);
+                const compressed = await compressImage(astroFaceFile, 512);
                 const reader = new FileReader();
                 faceBase64 = await new Promise((resolve) => {
                     reader.onload = () => resolve(reader.result.split(",")[1]); // strip data:... prefix
@@ -1674,10 +1673,7 @@ window.addEventListener("unhandledrejection", function(e) {
             // Send with retry
             let jobId = null;
             let lastErr = null;
-            const dbg = $("#astroDebugLog");
-            dbg.style.display = "block";
-            dbg.textContent = "";
-            function dlog(m) { dbg.textContent += new Date().toLocaleTimeString() + " " + m + "\n"; dbg.scrollTop = dbg.scrollHeight; console.log("[astro]", m); }
+            function dlog(m) { console.log("[astro]", m); }
 
             dlog("API: " + API);
             dlog("payload: " + payload.length + " bytes, face: " + !!faceBase64 + " (" + (faceBase64||"").length + " chars)");
@@ -1707,6 +1703,7 @@ window.addEventListener("unhandledrejection", function(e) {
 
             // Poll (astro takes 60-90s, give 4.5 min)
             const data = await pollJob(jobId, 90);
+            currentAstroJobId = jobId;
 
             $("#astroLoading").classList.remove("visible");
 
@@ -1720,7 +1717,7 @@ window.addEventListener("unhandledrejection", function(e) {
                 $("#astroAnalysis").textContent = data.analysis;
                 $("#astroAnalysis").style.display = "block";
             }
-            $("#astroPromptBody").textContent = data.astroPrompt || "";
+            // astroPrompt stored in job but not shown to user
             $("#astroResult").classList.add("visible");
             $("#astroResult").scrollIntoView({ behavior: "smooth", block: "center" });
 
@@ -1734,32 +1731,19 @@ window.addEventListener("unhandledrejection", function(e) {
     });
 
     // Astro result buttons
-    $("#astroPromptToggle").addEventListener("click", () => {
-        $("#astroPromptBody").classList.toggle("open");
-        $("#astroPromptToggle").textContent = $("#astroPromptBody").classList.contains("open") ? "Скрыть промт" : "Показать промт";
-    });
+    // prompt toggle removed — users see only image + analysis
     $("#astroDlBtn").addEventListener("click", () => {
-        const src = $("#astroResultImg").src;
-        // If it's a URL (not base64) — use tg.openLink or direct navigation
-        if (src.startsWith("http")) {
-            if (tg?.openLink) tg.openLink(src);
-            else window.location.href = src;
+        // Use /api/download endpoint — works after server restarts (reads from Supabase)
+        const dlUrl = currentAstroJobId ? `${API}/api/download/${currentAstroJobId}` : null;
+        if (dlUrl) {
+            if (tg?.openLink) tg.openLink(dlUrl);
+            else window.location.href = dlUrl;
         } else {
-            // base64 → blob download
-            try {
-                const b64 = src.replace(/^data:image\/\w+;base64,/, "");
-                const byteChars = atob(b64);
-                const byteArr = new Uint8Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-                const blob = new Blob([byteArr], { type: "image/png" });
-                const blobUrl = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = blobUrl;
-                a.download = `yupself-astro-${Date.now()}.png`;
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-            } catch {
+            // Fallback: download from img src
+            const src = $("#astroResultImg").src;
+            if (src.startsWith("http")) {
                 if (tg?.openLink) tg.openLink(src);
+                else window.location.href = src;
             }
         }
     });
