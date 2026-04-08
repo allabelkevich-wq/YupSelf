@@ -949,13 +949,14 @@ window.addEventListener("unhandledrejection", function(e) {
     function sel(g) { return $(`[data-g="${g}"] .on`)?.dataset.v || ""; }
 
     // ── Poll job result ───────────────────────────────────
-    async function pollJob(jobId) {
+    async function pollJob(jobId, maxAttempts) {
+        const max = maxAttempts || 60; // default 3 min, astro passes 90 (4.5 min)
         let failures = 0;
-        for (let i = 0; i < 60; i++) { // max 3 minutes
+        for (let i = 0; i < max; i++) {
             await new Promise(r => setTimeout(r, 3000));
             try {
                 const res = await fetch(`${API}/api/job/${jobId}`);
-                if (!res.ok) { failures++; if (failures > 3) throw new Error("Server error"); continue; }
+                if (!res.ok) { failures++; if (failures > 5) throw new Error("Server error"); continue; }
                 failures = 0;
                 const job = await res.json();
                 if (job.status === "done") return job;
@@ -966,7 +967,7 @@ window.addEventListener("unhandledrejection", function(e) {
             } catch (e) {
                 if (e.message === "Generation failed" || e.message === "Server error") throw e;
                 failures++;
-                if (failures > 5) throw new Error("Потеряно соединение");
+                if (failures > 7) throw new Error("Потеряно соединение");
             }
         }
         throw new Error("timeout");
@@ -1670,8 +1671,8 @@ window.addEventListener("unhandledrejection", function(e) {
             }
             if (!jobId) throw new Error(lastErr || "Не удалось запустить генерацию");
 
-            // Poll
-            const data = await pollJob(jobId);
+            // Poll (astro takes 60-90s, give 4.5 min)
+            const data = await pollJob(jobId, 90);
 
             $("#astroLoading").classList.remove("visible");
 

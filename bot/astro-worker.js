@@ -2,7 +2,7 @@ import "dotenv/config";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { generateImage, editImage } from "./openrouter.js";
+import { generateImage, generateImageWithFace } from "./openrouter.js";
 import supabase from "./db.js";
 
 // Geocode — multi-strategy (Nominatim → Photon → hardcoded fallback)
@@ -310,10 +310,11 @@ export async function generateAstroImage(params) {
 
   let result;
   if (faceImageB64) {
-    // Edit mode: face + astro prompt
-    result = await editImage(imagePrompt, [faceImageB64], { aspectRatio });
+    // Face mode: use Google AI Studio for multimodal (face → image)
+    console.log(`[astro] Using face photo, calling generateImageWithFace...`);
+    result = await generateImageWithFace(imagePrompt, faceImageB64, { aspectRatio });
   } else {
-    // Generate from scratch
+    // Generate from scratch (text-only)
     result = await generateImage(imagePrompt, { aspectRatio, quality: "pro" });
   }
 

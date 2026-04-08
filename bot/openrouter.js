@@ -2,6 +2,7 @@ import "dotenv/config";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LAOZHANG_API_KEY = process.env.LAOZHANG_API_KEY;
+const GOOGLE_AI_KEY = process.env.GOOGLE_AI_KEY;
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
@@ -182,6 +183,127 @@ export async function generateImage(prompt, imageConfig = {}) {
   }
 
   throw new Error("All image generation APIs failed");
+}
+
+// ── Google AI Studio URL ────────────────────────────────────────────
+const GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+/**
+ * Generate image WITH face reference using Google AI Studio native API.
+ * This is the ONLY reliable way to do multimodal image generation (face in → image out).
+ * laozhang/OpenRouter return 400 for multimodal image generation.
+ *
+ * Fallback chain:
+ * 1. Google AI Studio (gemini-2.0-flash-preview-image-generation) — multimodal
+ * 2. Google AI Studio (gemini-2.0-flash-exp) — multimodal fallback
+ * 3. laozhang/OpenRouter text-only (no face, just prompt) — last resort
+ *
+ * @param {string} prompt — the image generation prompt
+ * @param {string} faceBase64 — face photo base64 (with or without data: prefix)
+ * @param {{ aspectRatio?: string }} imageConfig
+ */
+export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}) {
+  const cleanB64 = faceBase64.replace(/^data:image\/\w+;base64,/, "");
+
+  // Build structured prompt with face preservation
+  const fullPrompt = `Using the attached photo as a face reference, generate the following image. ` +
+    `CRITICAL: Preserve the person's facial features, identity, bone structure, and expression EXACTLY as in the reference photo. ` +
+    `The person in the generated image must be recognizably the same person.\n\n${prompt}`;
+
+  const MODELS = [
+    "gemini-3-pro-image-preview",      // Nano Banana Pro — best quality
+    "gemini-3.1-flash-image-preview",   // Nano Banana 2 — fast fallback
+    "gemini-2.5-flash-image",           // Nano Banana — another fallback
+  ];
+
+  // Primary: laozhang editImage (paid, reliable for multimodal)
+  try {
+    console.log("[face-gen] using laozhang editImage (primary)...");
+    return await editImage(prompt, [faceBase64], imageConfig);
+  } catch (err) {
+    console.warn("[face-gen] editImage failed:", err.message);
+  }
+
+  // Fallback: Google AI Studio (if key available and has quota)
+  if (GOOGLE_AI_KEY) {
+    for (const model of MODELS) {
+      try {
+        console.log(`[face-gen] trying Google AI Studio: ${model}...`);
+        const result = await _callGoogleAI(model, fullPrompt, cleanB64);
+        if (result) {
+          console.log(`[face-gen] success with ${model}`);
+          return result;
+        }
+      } catch (err) {
+        console.warn(`[face-gen] ${model} failed:`, err.message);
+      }
+    }
+  }
+
+  // Last resort: generate without face (text-only)
+  console.log("[face-gen] all multimodal failed, generating text-only...");
+  const textOnlyPrompt = prompt + "\nCreate a portrait of this person showing their unique energy and presence.";
+  return await generateImage(textOnlyPrompt, { ...imageConfig, quality: "pro" });
+}
+
+/**
+ * Call Google AI Studio native API for multimodal image generation.
+ * Uses inline_data format (Gemini native, most reliable).
+ */
+async function _callGoogleAI(model, prompt, imageBase64) {
+  const url = `${GOOGLE_AI_URL}/${model}:generateContent?key=${GOOGLE_AI_KEY}`;
+
+  const body = {
+    contents: [{
+      parts: [
+        {
+          inline_data: {
+            mime_type: "image/jpeg",
+            data: imageBase64,
+          },
+        },
+        { text: prompt },
+      ],
+    }],
+    generationConfig: {
+      responseModalities: ["IMAGE", "TEXT"],
+      temperature: 1.0,
+    },
+  };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90000); // 90s for image gen
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  });
+  clearTimeout(timeout);
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Google AI ${res.status}: ${err.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+
+  // Extract image from Google AI response
+  const parts = data.candidates?.[0]?.content?.parts;
+  if (!parts) return null;
+
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return { imageBase64: part.inlineData.data };
+    }
+    // Some responses use inline_data (snake_case)
+    if (part.inline_data?.data) {
+      return { imageBase64: part.inline_data.data };
+    }
+  }
+
+  return null;
 }
 
 /**
