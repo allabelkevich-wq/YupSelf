@@ -942,12 +942,20 @@ async function main() {
     const { webhookCallback } = await import("grammy");
     app.use(`/bot${BOT_TOKEN}`, webhookCallback(bot, "express"));
 
-    app.listen(PORT, async () => {
-      await bot.api.setWebhook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
-      await setupBotMenu();
-      console.log(`YupSelf running on port ${PORT} (webhook)`);
-      const ts = new Date().toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
-      await notifyAdmins(`<b>YupSelf обновлён</b>\n${ts} MSK`);
+    app.listen(PORT, () => {
+      console.log(`YupSelf listening on port ${PORT}`);
+      // Non-blocking: webhook setup after server is already responding to health checks
+      (async () => {
+        try {
+          await bot.api.setWebhook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
+          await setupBotMenu();
+          console.log(`YupSelf webhook set (${WEBHOOK_URL})`);
+          const ts = new Date().toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+          await notifyAdmins(`<b>YupSelf обновлён</b>\n${ts} MSK`);
+        } catch (err) {
+          console.error("[startup] webhook setup failed:", err.message);
+        }
+      })();
     });
   } else {
     app.listen(PORT, () => console.log(`Health check on port ${PORT}`));
