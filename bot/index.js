@@ -542,7 +542,7 @@ app.use(express.json({ limit: "5mb" }));
 // CORS for web UI
 app.use("/api", (_req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (_req.method === "OPTIONS") return res.sendStatus(200);
   next();
@@ -808,7 +808,7 @@ app.post("/api/astro/generate", async (req, res) => {
       }
       setTimeout(() => jobs.delete(jobId), 300000);
     }).catch(err => {
-      console.error(`[astro job ${jobId}] error:`, err.message);
+      console.error(`[astro job ${jobId}] error:`, err.message, err.stack?.split('\n').slice(0,3).join(' | '));
       jobs.set(jobId, { status: "error", error: err.message });
       setTimeout(() => jobs.delete(jobId), 60000);
     });

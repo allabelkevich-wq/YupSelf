@@ -950,13 +950,19 @@ window.addEventListener("unhandledrejection", function(e) {
 
     // ── Poll job result ───────────────────────────────────
     async function pollJob(jobId, maxAttempts) {
-        const max = maxAttempts || 60; // default 3 min, astro passes 90 (4.5 min)
+        const max = maxAttempts || 60;
         let failures = 0;
+        console.log("[poll] start", jobId, "max:", max);
         for (let i = 0; i < max; i++) {
             await new Promise(r => setTimeout(r, 3000));
             try {
                 const res = await fetch(`${API}/api/job/${jobId}`);
-                if (!res.ok) { failures++; if (failures > 5) throw new Error("Server error"); continue; }
+                if (!res.ok) {
+                    failures++;
+                    console.warn("[poll]", i, "not ok:", res.status, "failures:", failures);
+                    if (failures > 5) throw new Error("Server error (poll " + failures + "x " + res.status + ")");
+                    continue;
+                }
                 failures = 0;
                 const job = await res.json();
                 if (job.status === "done") return job;
@@ -1653,21 +1659,28 @@ window.addEventListener("unhandledrejection", function(e) {
             // Send with retry
             let jobId = null;
             let lastErr = null;
+            console.log("[astro] payload size:", payload.length, "face:", !!faceBase64, "faceLen:", (faceBase64||"").length);
             for (let attempt = 0; attempt < 3 && !jobId; attempt++) {
                 if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
                 try {
+                    console.log("[astro] attempt", attempt + 1, "POST to", API + "/api/astro/generate");
                     const res = await fetch(`${API}/api/astro/generate`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: payload,
                     });
+                    console.log("[astro] response status:", res.status);
                     const text = await res.text();
+                    console.log("[astro] response body:", text.slice(0, 200));
                     try {
                         const json = JSON.parse(text);
                         if (json.jobId) jobId = json.jobId;
-                        else lastErr = json.error || "No jobId in response";
-                    } catch { lastErr = "Invalid response: " + text.slice(0, 100); }
-                } catch (e) { lastErr = e.message; }
+                        else lastErr = json.error || "No jobId: " + text.slice(0, 100);
+                    } catch { lastErr = "Invalid JSON: " + text.slice(0, 100); }
+                } catch (e) {
+                    console.error("[astro] fetch error:", e.message, e.name);
+                    lastErr = e.message;
+                }
             }
             if (!jobId) throw new Error(lastErr || "Не удалось запустить генерацию");
 
