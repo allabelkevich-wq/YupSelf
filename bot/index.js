@@ -536,7 +536,7 @@ app.use(express.static(join(__dirname, "public"), { maxAge: 0, etag: false, last
 
 app.get("/healthz", async (_req, res) => {
   const tableOk = await ensureJobsTable();
-  res.json({ status: "ok", jobsTable: tableOk, cacheSize: jobCache.size });
+  res.json({ status: "ok", jobsTable: tableOk, cacheSize: jobCache.size, jobsError: _jobsLastError });
 });
 
 // ── Web API: generate image ─────────────────────────────────────────
@@ -578,15 +578,17 @@ const jobCache = new Map();
 // Lazy check: verify jobs table on first write, retry periodically
 let jobsTableReady = false;
 let jobsTableChecked = false;
+let _jobsLastError = null;
 async function ensureJobsTable() {
   if (jobsTableReady) return true;
-  if (jobsTableChecked && Date.now() - jobsTableChecked < 60000) return false; // retry every 60s
+  if (jobsTableChecked && Date.now() - jobsTableChecked < 30000) return false;
   jobsTableChecked = Date.now();
   try {
-    const { error } = await supabase.from("jobs").select("job_id").limit(1);
-    if (!error) { jobsTableReady = true; console.log("[jobs] Supabase table ready"); return true; }
-    console.warn("[jobs] Table not found:", error.message);
-  } catch {}
+    const { data, error } = await supabase.from("jobs").select("job_id").limit(1);
+    if (!error) { jobsTableReady = true; _jobsLastError = null; console.log("[jobs] Supabase table ready"); return true; }
+    _jobsLastError = error.message + " | code:" + (error.code || "?") + " | hint:" + (error.hint || "?");
+    console.warn("[jobs]", _jobsLastError);
+  } catch (e) { _jobsLastError = "exception: " + e.message; }
   return false;
 }
 
