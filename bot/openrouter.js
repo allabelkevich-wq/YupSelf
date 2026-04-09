@@ -338,68 +338,65 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     });
   }
 
-  // Pass prompt as-is — caller is responsible for structuring it
-  // For edit: "Edit this image: remove watermark"
-  // For face gen: "Using the attached face photo, generate: [description]"
-  const structuredPrompt = prompt;
+  content.push({ type: "text", text: prompt });
 
-  content.push({ type: "text", text: structuredPrompt });
-
-  const body = {
-    model: LAOZHANG_API_KEY ? IMAGE_MODEL_FALLBACK : IMAGE_MODEL_PRO,
-    messages: [{ role: "user", content }],
-    max_tokens: 8192,
-  };
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-
-  // Try laozhang first (cheaper), then OpenRouter fallback
   const apiUrl = LAOZHANG_API_KEY ? LAOZHANG_URL : OPENROUTER_URL;
   const apiKey = LAOZHANG_API_KEY || OPENROUTER_API_KEY;
 
-  try {
-    const res = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+  // Try up to 2 attempts — if Gemini returns text instead of image, retry with simpler prompt
+  const prompts = [prompt, `Apply changes to this image and return the result as an image: ${prompt}`];
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`API error ${res.status}: ${err.slice(0, 200)}`);
+  for (let attempt = 0; attempt < prompts.length; attempt++) {
+    // Rebuild content with current prompt
+    const reqContent = [...content.slice(0, -1), { type: "text", text: prompts[attempt] }];
+
+    const body = {
+      model: LAOZHANG_API_KEY ? IMAGE_MODEL_FALLBACK : IMAGE_MODEL_PRO,
+      messages: [{ role: "user", content: reqContent }],
+      max_tokens: 8192,
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    try {
+      const res = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`API error ${res.status}: ${err.slice(0, 200)}`);
+      }
+
+      const data = await res.json();
+
+      // Check if Gemini returned an error in text instead of image
+      const msg = data.choices?.[0]?.message?.content;
+      if (typeof msg === "string" && msg.includes("MALFORMED_FUNCTION_CALL")) {
+        console.warn(`[edit] attempt ${attempt + 1}: Gemini returned text, not image. Retrying...`);
+        continue;
+      }
+
+      const result = _extractImage(data);
+      if (result) return result;
+      console.warn(`[edit] attempt ${attempt + 1}: no image extracted`);
+    } catch (err) {
+      clearTimeout(timeout);
+      if (attempt === prompts.length - 1) {
+        console.warn("[edit] all attempts failed:", err.message);
+      }
     }
-
-    const data = await res.json();
-    const result = _extractImage(data);
-    if (result) return result;
-  } catch (err) {
-    clearTimeout(timeout);
-    console.warn("[edit] primary failed:", err.message);
-
-    // Fallback to other API
-    if (LAOZHANG_API_KEY && OPENROUTER_API_KEY) {
-      try {
-        body.model = IMAGE_MODEL_PRO;
-        const res2 = await fetch(OPENROUTER_URL, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (res2.ok) {
-          const data2 = await res2.json();
-          const result2 = _extractImage(data2);
-          if (result2) return result2;
-        }
-      } catch {}
-    }
-    throw err;
   }
+
+  } catch (e) { console.warn("[edit] text-only fallback failed:", e.message); }
 
   throw new Error("Image editing failed — no image in response");
 }
