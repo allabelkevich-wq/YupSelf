@@ -1022,15 +1022,20 @@ window.addEventListener("unhandledrejection", function(e) {
                 }
                 // Save face if checkbox on and no face saved yet
                 await maybeSaveFace();
-                const editRes = await fetch(`${API}/api/edit`, { method: "POST", body: form });
-                if (!editRes.ok) throw new Error("Edit error " + editRes.status);
-                const editData = await editRes.json();
-                if (editData.jobId) {
-                    currentJobId = editData.jobId;
-                    data = await pollJob(editData.jobId);
-                } else {
-                    data = editData; // direct response (shouldn't happen but just in case)
+                // Send with retry (mobile networks can timeout on large uploads)
+                let editJobId = null;
+                for (let attempt = 0; attempt < 3 && !editJobId; attempt++) {
+                    if (attempt > 0) { console.log("[edit] retry", attempt + 1); await new Promise(r => setTimeout(r, 2000)); }
+                    try {
+                        const editRes = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                        if (!editRes.ok) { console.warn("[edit] HTTP", editRes.status); continue; }
+                        const editData = await editRes.json();
+                        if (editData.jobId) editJobId = editData.jobId;
+                    } catch (e) { console.warn("[edit] fetch error:", e.name, e.message); }
                 }
+                if (!editJobId) throw new Error("Не удалось отправить изображение. Проверь соединение.");
+                currentJobId = editJobId;
+                data = await pollJob(editJobId);
             } else {
                 // Generate mode — async with polling + retry for slow networks
                 const genPayload = JSON.stringify({
@@ -1089,7 +1094,7 @@ window.addEventListener("unhandledrejection", function(e) {
         } catch (err) {
             loading.classList.remove("visible");
             console.error("Generate error:", err);
-            alert("Ошибка: " + (err.message || err) + "\n\nОтправь этот текст разработчику.");
+            alert("Ошибка: " + (err.name ? err.name + ": " : "") + (err.message || err));
         } finally {
             btn.disabled = false;
             btn.textContent = "Сгенерировать";
