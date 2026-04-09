@@ -97,7 +97,7 @@
             border: 1px solid var(--border-bright);
             border-radius: 28px;
             padding: 36px;
-            box-sizing: border-box; overflow: hidden;
+            box-sizing: border-box; overflow: visible;
             box-shadow:
                 0 0 0 1px rgba(255,255,255,0.03) inset,
                 0 30px 80px -20px rgba(0, 0, 0, 0.7),
@@ -435,7 +435,7 @@
         /* ── Mobile ───────────────────────────────────────── */
         @media (max-width: 600px) {
             .page { padding: 16px 8px 80px; }
-            .glass { padding: 16px 12px; border-radius: 18px; width: 100%; max-width: 100%; overflow: hidden; box-sizing: border-box; }
+            .glass { padding: 16px 12px; border-radius: 18px; width: 100%; max-width: 100%; overflow: visible; box-sizing: border-box; }
             .logo { font-size: 32px; }
             header { margin-bottom: 20px; }
             textarea { font-size: 15px; min-height: 80px; padding: 14px 44px 14px 14px; }
