@@ -961,7 +961,7 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
       } catch (e) { console.warn("[edit] face load failed:", e.message); }
     }
 
-    const fullPrompt = prompt + facePromptSuffix;
+    const fullPrompt = `Edit this image: ${prompt}${facePromptSuffix}. Return the edited image.`;
 
     // Async job
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

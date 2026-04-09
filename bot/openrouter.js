@@ -219,7 +219,7 @@ export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}
   // Primary: laozhang editImage (paid, reliable for multimodal)
   try {
     console.log("[face-gen] using laozhang editImage (primary)...");
-    return await editImage(prompt, [faceBase64], imageConfig);
+    return await editImage(fullPrompt, [faceBase64], imageConfig);
   } catch (err) {
     console.warn("[face-gen] editImage failed:", err.message);
   }
@@ -333,7 +333,10 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     });
   }
 
-  const structuredPrompt = `Edit this image: ${prompt}. Return the edited image.`;
+  // Pass prompt as-is — caller is responsible for structuring it
+  // For edit: "Edit this image: remove watermark"
+  // For face gen: "Using the attached face photo, generate: [description]"
+  const structuredPrompt = prompt;
 
   content.push({ type: "text", text: structuredPrompt });
 
