@@ -205,10 +205,15 @@ const GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}) {
   const cleanB64 = faceBase64.replace(/^data:image\/\w+;base64,/, "");
 
-  // Build structured prompt with face preservation
-  const fullPrompt = `Using the attached photo as a face reference, generate the following image. ` +
-    `CRITICAL: Preserve the person's facial features, identity, bone structure, and expression EXACTLY as in the reference photo. ` +
-    `The person in the generated image must be recognizably the same person.\n\n${prompt}`;
+  // Truncate visual prompt to ~800 chars to leave room for face instructions
+  // Long prompts cause Gemini to ignore the face reference
+  const visualPrompt = prompt.length > 800 ? prompt.slice(0, 800) + "..." : prompt;
+
+  // Face instruction FIRST, short and direct — then visual description
+  const fullPrompt = `Generate a portrait using the attached face photo as reference. ` +
+    `The person's face MUST match the photo exactly — same eyes, nose, lips, face shape, skin tone. ` +
+    `Do NOT change the face. Do NOT use a different person.\n\n` +
+    `Visual style: ${visualPrompt}`;
 
   const MODELS = [
     "gemini-3-pro-image-preview",      // Nano Banana Pro — best quality
