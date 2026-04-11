@@ -30,14 +30,16 @@ export function daraiToYocto(amountDarai) {
 }
 
 /**
- * Pricing for YupSelf token packages (in DARAI).
- * Each generation = 100 Искр, user balance stored in Supabase `users.tokens_balance`.
+ * Pricing for YupSelf Искры packages (in DARAI).
+ * 1 generation = 100 Искр. User balance in Supabase `users.tokens_balance`.
+ * No USD conversion — fixed DARAI amounts.
  */
 export const YUPPAY_PACKAGES = [
-  { id: "pack_3", tokens: 300, darai: 3, label: "3 генерации" },
-  { id: "pack_10", tokens: 1000, darai: 9, label: "10 генераций" },
-  { id: "pack_30", tokens: 3000, darai: 25, label: "30 генераций" },
-  { id: "pack_100", tokens: 10000, darai: 75, label: "100 генераций" },
+  { id: "pack_500",   tokens: 500,   darai: 3_500_000,   label: "500 Искр (5 генераций)",    discount: 0 },
+  { id: "pack_1000",  tokens: 1000,  darai: 7_000_000,   label: "1 000 Искр (10 генераций)", discount: 0 },
+  { id: "pack_5000",  tokens: 5000,  darai: 31_500_000,  label: "5 000 Искр (50 генераций) −10%",  discount: 10 },
+  { id: "pack_10000", tokens: 10000, darai: 56_000_000,  label: "10 000 Искр (100 генераций) −20%", discount: 20 },
+  { id: "pack_20000", tokens: 20000, darai: 105_000_000, label: "20 000 Искр (200 генераций) −25%", discount: 25 },
 ];
 
 /**
