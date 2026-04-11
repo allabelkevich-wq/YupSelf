@@ -5,6 +5,8 @@ import { enhancePrompt, translatePrompt, generateImage, editImage } from "./open
 import { transcribeAudio } from "./groq.js";
 import supabase, { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite, uploadImage } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
+import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, YUPPAY_PACKAGES } from "./yuppay.js";
+import { addTokens } from "./db.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
 
@@ -647,6 +649,80 @@ app.get("/healthz", async (_req, res) => {
   res.json({ status: "ok", jobsTable: tableOk, cacheSize: jobCache.size, jobsError: _jobsLastError });
 });
 
+// ── YupPay webhook (BEFORE express.json — needs raw body for HMAC) ──
+// Track processed invoices to avoid double-crediting on webhook retries
+const _yuppayProcessed = new Set();
+setInterval(() => { if (_yuppayProcessed.size > 1000) _yuppayProcessed.clear(); }, 3600000).unref?.();
+
+app.post("/api/webhooks/yuppay",
+  express.raw({ type: "*/*", limit: "1mb" }),
+  async (req, res) => {
+    try {
+      const rawBody = req.body; // Buffer
+      const signature = req.get("x-yuppay-signature") || req.get("X-Yuppay-Signature") || "";
+
+      if (!yuppayVerifySig(rawBody, signature)) {
+        console.warn("[yuppay/webhook] invalid signature");
+        return res.status(401).json({ error: "Invalid signature" });
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        return res.status(400).json({ error: "Invalid JSON" });
+      }
+
+      const event = payload.event || payload.type;
+      const data = payload.data || payload;
+      const invoiceId = data?.invoice?.id || data?.invoice_id || data?.id;
+
+      console.log(`[yuppay/webhook] event=${event} invoice=${invoiceId}`);
+
+      if (event !== "payment.confirmed") {
+        // Acknowledge other events (status updates etc.) without crediting
+        return res.json({ ok: true, skipped: true });
+      }
+
+      // Idempotency: don't credit the same invoice twice
+      if (invoiceId && _yuppayProcessed.has(invoiceId)) {
+        return res.json({ ok: true, alreadyProcessed: true });
+      }
+
+      // Read metadata set when we created the invoice
+      const metadata = data?.invoice?.metadata || data?.metadata || {};
+      const telegramId = Number(metadata.telegram_chat_id);
+      const tokens = Number(metadata.tokens);
+      const packageId = metadata.package_id;
+
+      if (!telegramId || !tokens) {
+        console.warn("[yuppay/webhook] missing metadata:", metadata);
+        return res.status(400).json({ error: "Missing telegram_chat_id/tokens in metadata" });
+      }
+
+      // Credit Искры to user
+      await addTokens(telegramId, tokens, "yuppay", `Пополнение через YupPay (${packageId || "—"})`);
+      if (invoiceId) _yuppayProcessed.add(invoiceId);
+      console.log(`[yuppay/webhook] credited ${tokens} to user ${telegramId}`);
+
+      // Notify user in Telegram
+      try {
+        await bot.api.sendMessage(
+          telegramId,
+          `✨ Оплата прошла! На баланс зачислено ${tokens} Искр. Открой YupSelf и создавай портреты.`
+        );
+      } catch (e) {
+        console.warn("[yuppay/webhook] notify failed:", e.message);
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[yuppay/webhook] error:", err.message);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  }
+);
+
 // ── Web API: generate image ─────────────────────────────────────────
 // 20MB limit — enough for 5 base64 photos (each ~2-3MB compressed)
 app.use(express.json({ limit: "20mb" }));
@@ -991,6 +1067,30 @@ app.get("/api/payment/pending/:telegramId", requireOwnResource, async (req, res)
   } catch (err) {
     console.error("[payment/pending]", err.message);
     res.status(500).json({ error: "Не удалось загрузить платежи" });
+  }
+});
+
+// ── YupPay API ──────────────────────────────────────────────────────
+app.get("/api/yuppay/packages", (_req, res) => {
+  res.json({ packages: YUPPAY_PACKAGES });
+});
+
+// Rate limit: max 5 invoices per minute per user
+const invoiceRateLimit = rateLimit({ windowMs: 60000, max: 5, keyFn: userOrIpKey });
+
+app.post("/api/yuppay/create", invoiceRateLimit, requireTelegramAuth, async (req, res) => {
+  try {
+    const { packageId } = req.body;
+    if (!packageId) return res.status(400).json({ error: "packageId required" });
+    const invoice = await yuppayCreateInvoice({
+      packageId,
+      telegramId: req.tgUser.id,
+      publicBaseUrl: process.env.WEBHOOK_URL || "https://yupself-bot.onrender.com",
+    });
+    res.json(invoice);
+  } catch (err) {
+    console.error("[yuppay/create]", err.message);
+    res.status(500).json({ error: "Не удалось создать счёт" });
   }
 });
 

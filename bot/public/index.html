@@ -1441,10 +1441,10 @@ window.addEventListener("unhandledrejection", function(e) {
         const tgUser = tg?.initDataUnsafe?.user;
         if (!tgUser) { alert("Войди через Telegram"); return; }
 
-        // Load packages
+        // Load YupPay packages
         try {
-            const res = await fetch(`${API}/api/packages`);
-            const { packages, merchantAccount } = await res.json();
+            const res = await apiFetch(`${API}/api/yuppay/packages`);
+            const { packages } = await res.json();
 
             const box = $("#payPackages");
             box.textContent = "";
@@ -1455,7 +1455,11 @@ window.addEventListener("unhandledrejection", function(e) {
                 const labelEl = document.createElement("div");
                 labelEl.style.cssText = "font-size:14px; font-weight:700;";
                 labelEl.textContent = pkg.label || "";
+                const tokensEl = document.createElement("div");
+                tokensEl.style.cssText = "font-size:11px; color:var(--text-secondary); margin-top:2px;";
+                tokensEl.textContent = (pkg.tokens || 0) + " Искр";
                 leftWrap.appendChild(labelEl);
+                leftWrap.appendChild(tokensEl);
                 const rightWrap = document.createElement("div");
                 rightWrap.style.textAlign = "right";
                 const amountEl = document.createElement("div");
@@ -1468,37 +1472,42 @@ window.addEventListener("unhandledrejection", function(e) {
                 rightWrap.appendChild(unitEl);
                 div.appendChild(leftWrap);
                 div.appendChild(rightWrap);
-                div.addEventListener("click", () => startPayment(tgUser.id, pkg.id));
+                div.addEventListener("click", () => startYupPay(pkg.id));
                 box.appendChild(div);
             }
 
             $("#payModal").style.display = "flex";
         } catch (err) {
-            alert("Ошибка загрузки пакетов");
+            alert("Не удалось загрузить пакеты");
         }
     });
 
-    async function startPayment(telegramId, packageId) {
+    async function startYupPay(packageId) {
         try {
-            const res = await fetch(`${API}/api/payment/create`, {
+            const res = await apiFetch(`${API}/api/yuppay/create`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ telegramId, packageId }),
+                body: JSON.stringify({ packageId }),
             });
+            if (!res.ok) throw new Error("HTTP " + res.status);
             const data = await res.json();
 
-            currentPaymentId = data.paymentId;
-            $("#payAddress").textContent = data.merchantAccount;
-            $("#payAmount").textContent = data.daraiAmount;
-            $("#payAmount2").textContent = data.daraiAmount;
-            $("#payMemo").textContent = data.memo;
-            $("#payMemo2").textContent = data.memo;
+            // Prefer TG Mini App link when inside Telegram, else browser link
+            const link = (isTelegram && data.payTgUrl) ? data.payTgUrl : data.payUrl;
+            if (!link) throw new Error("No pay link");
 
-            $("#payStep1").style.display = "none";
-            $("#payStep2").style.display = "block";
-            $("#payStatus").textContent = "";
-        } catch {
-            alert("Ошибка создания платежа");
+            // Close modal and open YupPay
+            $("#payModal").style.display = "none";
+            if (tg?.openTelegramLink && data.payTgUrl) {
+                tg.openTelegramLink(data.payTgUrl);
+            } else if (tg?.openLink) {
+                tg.openLink(link);
+            } else {
+                window.location.href = link;
+            }
+        } catch (err) {
+            console.error("[yuppay]", err);
+            alert("Не удалось создать счёт");
         }
     }
 
