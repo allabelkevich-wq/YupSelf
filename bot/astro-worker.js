@@ -233,22 +233,34 @@ export async function generateAstroImage(params) {
 
   const userMessage = buildAstroUserMessage(astro, name, gender, intention, !!faceImageB64);
 
-  const dsRes = await fetch(DEEPSEEK_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "deepseek-chat",
-      messages: [
-        { role: "system", content: ASTRO_VISUAL_PROMPT },
-        { role: "user", content: userMessage },
-      ],
-      max_tokens: 1200,
-      temperature: 0.85,
-    }),
-  });
+  // DeepSeek with 60s timeout
+  const dsController = new AbortController();
+  const dsTimeout = setTimeout(() => dsController.abort(), 60000);
+  let dsRes;
+  try {
+    dsRes = await fetch(DEEPSEEK_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: ASTRO_VISUAL_PROMPT },
+          { role: "user", content: userMessage },
+        ],
+        max_tokens: 1200,
+        temperature: 0.85,
+      }),
+      signal: dsController.signal,
+    });
+  } catch (e) {
+    clearTimeout(dsTimeout);
+    if (e.name === "AbortError") throw new Error("DeepSeek timeout (60s)");
+    throw e;
+  }
+  clearTimeout(dsTimeout);
 
   if (!dsRes.ok) {
     const err = await dsRes.text();
@@ -265,12 +277,15 @@ export async function generateAstroImage(params) {
   console.log(`[astro] Step 3b: Generating text analysis...`);
   let analysis = "";
   try {
+    const analysisController = new AbortController();
+    const analysisTimeout = setTimeout(() => analysisController.abort(), 60000);
     const analysisRes = await fetch(DEEPSEEK_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
         "Content-Type": "application/json",
       },
+      signal: analysisController.signal,
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
@@ -299,6 +314,7 @@ export async function generateAstroImage(params) {
         temperature: 0.8,
       }),
     });
+    clearTimeout(analysisTimeout);
     if (analysisRes.ok) {
       const aData = await analysisRes.json();
       analysis = aData.choices?.[0]?.message?.content?.trim() || "";

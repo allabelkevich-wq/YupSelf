@@ -396,7 +396,14 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     }
   }
 
-  } catch (e) { console.warn("[edit] text-only fallback failed:", e.message); }
+  // Last resort: text-only generation without the reference image
+  try {
+    console.warn("[edit] multimodal failed, trying text-only regeneration...");
+    const textResult = await generateImage(`${prompt}. High quality, detailed.`, { quality: "pro" });
+    if (textResult) return textResult;
+  } catch (e) {
+    console.warn("[edit] text-only fallback failed:", e.message);
+  }
 
   throw new Error("Image editing failed — no image in response");
 }

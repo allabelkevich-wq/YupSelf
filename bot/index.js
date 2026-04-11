@@ -516,6 +516,114 @@ async function doGenerate(ctx, prompt, alreadyEnhanced = false) {
   }
 }
 
+// ── Rate limiting (in-memory sliding window) ───────────────────────
+// Prevents abuse: max N requests per window per key (IP or user).
+const _rateLimitStore = new Map();
+
+function rateLimit({ windowMs, max, keyFn }) {
+  return (req, res, next) => {
+    const key = (keyFn ? keyFn(req) : req.ip) || "anon";
+    const now = Date.now();
+    const bucket = _rateLimitStore.get(key) || [];
+    // Remove expired entries
+    const fresh = bucket.filter(t => now - t < windowMs);
+    if (fresh.length >= max) {
+      const retryAfter = Math.ceil((windowMs - (now - fresh[0])) / 1000);
+      res.setHeader("Retry-After", String(retryAfter));
+      return res.status(429).json({ error: "Слишком много запросов. Подожди немного." });
+    }
+    fresh.push(now);
+    _rateLimitStore.set(key, fresh);
+    next();
+  };
+}
+
+// Cleanup stale rate limit entries every 5 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of _rateLimitStore.entries()) {
+    const fresh = bucket.filter(t => now - t < 600000); // 10 min max window
+    if (fresh.length === 0) _rateLimitStore.delete(key);
+    else _rateLimitStore.set(key, fresh);
+  }
+}, 300000).unref?.();
+
+// Key function: prefer Telegram user id, fallback to IP
+function userOrIpKey(req) {
+  // Try to extract Telegram user id from initData (lazy verify)
+  const initData = req.get("X-Telegram-Init-Data") || req.body?.initData;
+  if (initData) {
+    const result = verifyTelegramInitData(initData);
+    if (result.ok && result.user) return "tg:" + result.user.id;
+  }
+  return "ip:" + (req.ip || req.connection?.remoteAddress || "unknown");
+}
+
+// ── Telegram WebApp initData verification ──────────────────────────
+import crypto from "crypto";
+
+/**
+ * Verify Telegram WebApp initData HMAC signature.
+ * Returns { ok: true, user } if valid, { ok: false } otherwise.
+ * Docs: https://core.telegram.org/bots/webapps#validating-data-received-via-the-web-app
+ */
+function verifyTelegramInitData(initData) {
+  if (!initData || typeof initData !== "string") return { ok: false };
+  try {
+    const params = new URLSearchParams(initData);
+    const hash = params.get("hash");
+    if (!hash) return { ok: false };
+    params.delete("hash");
+
+    // Build data_check_string
+    const pairs = [...params.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const dataCheckString = pairs.map(([k, v]) => `${k}=${v}`).join("\n");
+
+    // HMAC-SHA256 with secret = HMAC-SHA256("WebAppData", BOT_TOKEN)
+    const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
+    const computedHash = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+
+    if (computedHash !== hash) return { ok: false };
+
+    // Check auth_date freshness (within 24h)
+    const authDate = Number(params.get("auth_date") || 0);
+    if (Date.now() / 1000 - authDate > 86400) return { ok: false };
+
+    const userJson = params.get("user");
+    const user = userJson ? JSON.parse(userJson) : null;
+    return { ok: true, user };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Express middleware: require verified Telegram user.
+ * Reads initData from X-Telegram-Init-Data header or body.initData.
+ * Sets req.tgUser on success. Sends 401 on failure.
+ */
+function requireTelegramAuth(req, res, next) {
+  const initData = req.get("X-Telegram-Init-Data") || req.body?.initData || req.query?.initData;
+  const result = verifyTelegramInitData(initData);
+  if (!result.ok || !result.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  req.tgUser = result.user;
+  next();
+}
+
+/** Middleware: require auth AND that the :telegramId in URL matches authed user. */
+function requireOwnResource(req, res, next) {
+  requireTelegramAuth(req, res, (err) => {
+    if (err) return;
+    const urlTid = Number(req.params.telegramId || req.params.id);
+    if (!req.tgUser || Number(req.tgUser.id) !== urlTid) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    next();
+  });
+}
+
 // ── Express + Webhook / Polling ─────────────────────────────────────
 const app = express();
 
@@ -540,7 +648,8 @@ app.get("/healthz", async (_req, res) => {
 });
 
 // ── Web API: generate image ─────────────────────────────────────────
-app.use(express.json({ limit: "5mb" }));
+// 20MB limit — enough for 5 base64 photos (each ~2-3MB compressed)
+app.use(express.json({ limit: "20mb" }));
 
 // CORS for web UI
 app.use("/api", (_req, res, next) => {
@@ -573,7 +682,9 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
 // ── Persistent job store (Supabase) ──────────────────────────────────
 // Jobs survive server restarts — no more lost generations during deploys.
 // In-memory cache for fast reads during active generation.
+// Each entry has { data, ts } — entries older than 30min auto-evicted.
 const jobCache = new Map();
+const JOB_CACHE_TTL = 30 * 60 * 1000; // 30 min
 
 // Lazy check: verify jobs table on first write, retry periodically
 let jobsTableReady = false;
@@ -656,15 +767,29 @@ async function getJob(jobId) {
   }
 }
 
-// Clean old cache entries every 10 min
-setInterval(() => {
-  if (jobCache.size > 100) {
-    const entries = [...jobCache.entries()];
-    entries.slice(0, entries.length - 50).forEach(([k]) => jobCache.delete(k));
-  }
-}, 600000);
+// Track insertion time per job (parallel Map)
+const jobCacheTs = new Map();
 
-app.post("/api/generate", async (req, res) => {
+// Wrap original set/get to track TTL
+const _origSet = jobCache.set.bind(jobCache);
+jobCache.set = (k, v) => { jobCacheTs.set(k, Date.now()); return _origSet(k, v); };
+const _origDelete = jobCache.delete.bind(jobCache);
+jobCache.delete = (k) => { jobCacheTs.delete(k); return _origDelete(k); };
+
+// TTL cleanup every 5 min — removes entries older than 30 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, ts] of jobCacheTs.entries()) {
+    if (now - ts > JOB_CACHE_TTL) {
+      jobCache.delete(k);
+    }
+  }
+}, 300000).unref?.();
+
+// Generation rate limit: max 10 per 60s per user/IP
+const genRateLimit = rateLimit({ windowMs: 60000, max: 10, keyFn: userOrIpKey });
+
+app.post("/api/generate", genRateLimit, async (req, res) => {
   try {
     const { prompt, style, aspectRatio, imageSize, quality } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
@@ -684,32 +809,39 @@ app.post("/api/generate", async (req, res) => {
 
     const telegramId = req.body.telegramId || null;
 
-    Promise.race([genPromise, timeoutPromise]).then(async (result) => {
-      console.log(`[job ${jobId}] done! base64: ${(result.imageBase64||'').length} chars`);
-      await setJob(jobId, {
-        status: "done",
-        prompt,
-        imageBase64: result.imageBase64 || null,
-        imageUrl: result.imageUrl || null,
-      });
-      if (telegramId) {
+    // Safe background execution — all errors captured
+    (async () => {
+      try {
+        const result = await Promise.race([genPromise, timeoutPromise]);
+        console.log(`[job ${jobId}] done! base64: ${(result.imageBase64||'').length} chars`);
+        await setJob(jobId, {
+          status: "done",
+          prompt,
+          imageBase64: result.imageBase64 || null,
+          imageUrl: result.imageUrl || null,
+        });
+        if (telegramId) {
+          try {
+            await saveGeneration(telegramId, {
+              prompt,
+              aspectRatio: aspectRatio || "1:1",
+              imageSize: imageSize || "1K",
+              imageUrl: (await getJob(jobId))?.imageUrl || null,
+            });
+          } catch (e) { console.error("[save]", e.message); }
+        }
+      } catch (err) {
+        console.error(`[job ${jobId}] error:`, err.message);
         try {
-          await saveGeneration(telegramId, {
-            prompt,
-            aspectRatio: aspectRatio || "1:1",
-            imageSize: imageSize || "1K",
-            imageUrl: (await getJob(jobId))?.imageUrl || null,
-          });
-        } catch (e) { console.error("[save]", e.message); }
+          await setJob(jobId, { status: "error", error: err.message });
+        } catch (e2) { console.error("[job] setJob on error failed:", e2.message); }
       }
-    }).catch(async (err) => {
-      console.error(`[job ${jobId}] error:`, err.message);
-      await setJob(jobId, { status: "error", error: err.message });
-    });
+    })();
 
     res.json({ jobId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[generate]", err.message);
+    res.status(500).json({ error: "Не удалось запустить генерацию" });
   }
 });
 
@@ -749,13 +881,13 @@ app.post("/api/auth", async (req, res) => {
     res.json(user);
   } catch (err) {
     console.error("[api/auth]", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Не удалось авторизоваться" });
   }
 });
 
-app.get("/api/profile/:telegramId", async (req, res) => {
+app.get("/api/profile/:telegramId", requireOwnResource, async (req, res) => {
   try {
-    const tid = Number(req.params.telegramId);
+    const tid = req.tgUser.id;
     const [balance, stats, history] = await Promise.all([
       getBalance(tid),
       getUserStats(tid),
@@ -763,61 +895,65 @@ app.get("/api/profile/:telegramId", async (req, res) => {
     ]);
     res.json({ ...balance, stats, history });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[profile]", err.message);
+    res.status(500).json({ error: "Не удалось загрузить профиль" });
   }
 });
 
-app.get("/api/history/:telegramId", async (req, res) => {
+app.get("/api/history/:telegramId", requireOwnResource, async (req, res) => {
   try {
-    const tid = Number(req.params.telegramId);
-    const limit = Number(req.query.limit) || 20;
-    const offset = Number(req.query.offset) || 0;
+    const tid = req.tgUser.id;
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
     const gens = await getGenerations(tid, limit, offset);
     res.json(gens);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[history]", err.message);
+    res.status(500).json({ error: "Не удалось загрузить историю" });
   }
 });
 
-app.post("/api/favorite/:id", async (req, res) => {
+app.post("/api/favorite/:id", requireTelegramAuth, async (req, res) => {
   try {
-    const { telegramId } = req.body;
-    const result = await toggleFavorite(Number(req.params.id), telegramId);
+    const result = await toggleFavorite(Number(req.params.id), req.tgUser.id);
     res.json({ isFavorite: result });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[favorite]", err.message);
+    res.status(500).json({ error: "Не удалось обновить" });
   }
 });
 
 // ── Face Memory API ─────────────────────────────────────────────────
-app.post("/api/face/save", upload.single("face"), async (req, res) => {
+app.post("/api/face/save", upload.single("face"), requireTelegramAuth, async (req, res) => {
   try {
-    const { telegramId, name } = req.body;
-    if (!telegramId || !req.file) return res.status(400).json({ error: "telegramId and face required" });
+    const { name } = req.body;
+    if (!req.file) return res.status(400).json({ error: "face required" });
     const b64 = req.file.buffer.toString("base64");
-    const face = await saveFace(Number(telegramId), name || "Моё лицо", b64);
+    const face = await saveFace(req.tgUser.id, name || "Моё лицо", b64);
     res.json({ id: face.id, name: face.name });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[face/save]", err.message);
+    res.status(500).json({ error: "Не удалось сохранить фото" });
   }
 });
 
-app.get("/api/faces/:telegramId", async (req, res) => {
+app.get("/api/faces/:telegramId", requireOwnResource, async (req, res) => {
   try {
-    const faces = await getSavedFaces(Number(req.params.telegramId));
+    const faces = await getSavedFaces(req.tgUser.id);
     res.json(faces);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[faces]", err.message);
+    res.status(500).json({ error: "Не удалось загрузить фото" });
   }
 });
 
-app.delete("/api/face/:id", async (req, res) => {
+app.delete("/api/face/:id", requireTelegramAuth, async (req, res) => {
   try {
-    const { telegramId } = req.body;
-    await deleteFace(Number(req.params.id), Number(telegramId));
+    await deleteFace(Number(req.params.id), req.tgUser.id);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[face/delete]", err.message);
+    res.status(500).json({ error: "Не удалось удалить" });
   }
 });
 
@@ -826,38 +962,40 @@ app.get("/api/packages", (_req, res) => {
   res.json({ packages: PACKAGES, merchantAccount: MERCHANT_ACCOUNT });
 });
 
-app.post("/api/payment/create", async (req, res) => {
+app.post("/api/payment/create", requireTelegramAuth, async (req, res) => {
   try {
-    const { telegramId, packageId } = req.body;
-    if (!telegramId || !packageId) return res.status(400).json({ error: "telegramId and packageId required" });
-    const payment = await createPayment(telegramId, packageId);
+    const { packageId } = req.body;
+    if (!packageId) return res.status(400).json({ error: "packageId required" });
+    const payment = await createPayment(req.tgUser.id, packageId);
     res.json(payment);
   } catch (err) {
     console.error("[darai-pay]", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Не удалось создать платёж" });
   }
 });
 
-app.get("/api/payment/check/:id", async (req, res) => {
+app.get("/api/payment/check/:id", requireTelegramAuth, async (req, res) => {
   try {
     const result = await checkPayment(Number(req.params.id));
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[payment/check]", err.message);
+    res.status(500).json({ error: "Не удалось проверить платёж" });
   }
 });
 
-app.get("/api/payment/pending/:telegramId", async (req, res) => {
+app.get("/api/payment/pending/:telegramId", requireOwnResource, async (req, res) => {
   try {
-    const payments = await getPendingPayments(Number(req.params.telegramId));
+    const payments = await getPendingPayments(req.tgUser.id);
     res.json(payments);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[payment/pending]", err.message);
+    res.status(500).json({ error: "Не удалось загрузить платежи" });
   }
 });
 
 // ── Astro Image Generation API ───────────────────────────────────────
-app.post("/api/astro/generate", async (req, res) => {
+app.post("/api/astro/generate", genRateLimit, async (req, res) => {
   try {
     const { name, birthdate, birthplace, birthtime, birthtimeUnknown, gender, intention, faceBase64, faceId, telegramId, aspectRatio } = req.body;
     console.log("[astro] request:", JSON.stringify({ name, birthdate, birthplace, birthtime, gender, hasFace: !!(faceBase64 || faceId) }));
@@ -877,41 +1015,49 @@ app.post("/api/astro/generate", async (req, res) => {
       } catch {}
     }
 
-    // Run pipeline in background
-    generateAstroImage({
-      name, birthdate, birthplace, birthtime,
-      birthtimeUnknown: !!birthtimeUnknown,
-      gender, intention, faceImageB64, aspectRatio: aspectRatio || "1:1",
-    }).then(async (result) => {
-      console.log(`[astro job ${jobId}] done!`);
-      await setJob(jobId, {
-        status: "done",
-        type: "astro",
-        imageBase64: result.imageBase64,
-        imageUrl: result.imageUrl,
-        astroPrompt: result.astroPrompt,
-        snapshotSummary: result.snapshotSummary,
-        analysis: result.analysis,
-      });
-      if (telegramId) {
-        supabase.from("astro_image_requests").insert({
-          telegram_id: Number(telegramId),
-          name, birthdate, birthplace, birthtime, gender, intention,
-          aspect_ratio: aspectRatio || "1:1",
-          status: "completed",
-          astro_snapshot: result.astroSnapshot,
-          image_prompt: result.astroPrompt,
-          completed_at: new Date().toISOString(),
-        }).then(() => {}).catch(e => console.error("[astro db]", e.message));
+    // Safe background execution — all errors captured
+    (async () => {
+      try {
+        const result = await generateAstroImage({
+          name, birthdate, birthplace, birthtime,
+          birthtimeUnknown: !!birthtimeUnknown,
+          gender, intention, faceImageB64, aspectRatio: aspectRatio || "1:1",
+        });
+        console.log(`[astro job ${jobId}] done!`);
+        await setJob(jobId, {
+          status: "done",
+          type: "astro",
+          imageBase64: result.imageBase64,
+          imageUrl: result.imageUrl,
+          astroPrompt: result.astroPrompt,
+          snapshotSummary: result.snapshotSummary,
+          analysis: result.analysis,
+        });
+        if (telegramId) {
+          try {
+            await supabase.from("astro_image_requests").insert({
+              telegram_id: Number(telegramId),
+              name, birthdate, birthplace, birthtime, gender, intention,
+              aspect_ratio: aspectRatio || "1:1",
+              status: "completed",
+              astro_snapshot: result.astroSnapshot,
+              image_prompt: result.astroPrompt,
+              completed_at: new Date().toISOString(),
+            });
+          } catch (e) { console.error("[astro db]", e.message); }
+        }
+      } catch (err) {
+        console.error(`[astro job ${jobId}] error:`, err.message);
+        try {
+          await setJob(jobId, { status: "error", error: err.message });
+        } catch (e2) { console.error("[astro] setJob on error failed:", e2.message); }
       }
-    }).catch(async (err) => {
-      console.error(`[astro job ${jobId}] error:`, err.message);
-      await setJob(jobId, { status: "error", error: err.message });
-    });
+    })();
 
     res.json({ jobId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[astro/generate]", err.message);
+    res.status(500).json({ error: "Не удалось запустить генерацию" });
   }
 });
 
@@ -937,7 +1083,7 @@ app.get("/api/places", async (req, res) => {
 });
 
 // ── Web API: edit image with reference ───────────────────────────────
-app.post("/api/edit", upload.array("images", 5), async (req, res) => {
+app.post("/api/edit", genRateLimit, upload.array("images", 5), async (req, res) => {
   try {
     const prompt = req.body.prompt;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
@@ -967,35 +1113,40 @@ app.post("/api/edit", upload.array("images", 5), async (req, res) => {
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     await setJob(jobId, { status: "processing", prompt });
 
-    // Start edit in background
-    editImage(fullPrompt, imageBase64List, {
-      aspectRatio: req.body.aspectRatio || "1:1",
-      imageSize: req.body.imageSize || "1K",
-    }).then(async (result) => {
-      console.log(`[edit job ${jobId}] done!`);
-      await setJob(jobId, {
-        status: "done",
-        prompt,
-        imageBase64: result.imageBase64 || null,
-        imageUrl: result.imageUrl || null,
-      });
-    }).catch(async (editErr) => {
-      console.warn(`[edit job ${jobId}] editImage failed, fallback:`, editErr.message);
+    // Safe background execution — all errors captured
+    (async () => {
       try {
-        const result = await generateImage(prompt, {
+        const result = await editImage(fullPrompt, imageBase64List, {
           aspectRatio: req.body.aspectRatio || "1:1",
           imageSize: req.body.imageSize || "1K",
         });
+        console.log(`[edit job ${jobId}] done!`);
         await setJob(jobId, {
           status: "done",
           prompt,
           imageBase64: result.imageBase64 || null,
           imageUrl: result.imageUrl || null,
         });
-      } catch (genErr) {
-        await setJob(jobId, { status: "error", error: genErr.message });
+      } catch (editErr) {
+        console.warn(`[edit job ${jobId}] editImage failed, fallback:`, editErr.message);
+        try {
+          const result = await generateImage(prompt, {
+            aspectRatio: req.body.aspectRatio || "1:1",
+            imageSize: req.body.imageSize || "1K",
+          });
+          await setJob(jobId, {
+            status: "done",
+            prompt,
+            imageBase64: result.imageBase64 || null,
+            imageUrl: result.imageUrl || null,
+          });
+        } catch (genErr) {
+          try {
+            await setJob(jobId, { status: "error", error: genErr.message });
+          } catch (e2) { console.error("[edit] setJob on error failed:", e2.message); }
+        }
       }
-    });
+    })();
 
     res.json({ jobId });
   } catch (err) {
@@ -1035,9 +1186,8 @@ async function main() {
     const { webhookCallback } = await import("grammy");
     app.use(`/bot${BOT_TOKEN}`, webhookCallback(bot, "express"));
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`YupSelf listening on port ${PORT}`);
-      // Non-blocking: webhook setup after server is already responding to health checks
       (async () => {
         try {
           await bot.api.setWebhook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
@@ -1050,13 +1200,48 @@ async function main() {
         }
       })();
     });
+    setupGracefulShutdown(server);
   } else {
-    app.listen(PORT, () => console.log(`Health check on port ${PORT}`));
+    const server = app.listen(PORT, () => console.log(`Health check on port ${PORT}`));
     await bot.api.deleteWebhook();
     await setupBotMenu();
     console.log("YupSelf starting in polling mode...");
     bot.start();
+    setupGracefulShutdown(server);
   }
+}
+
+/**
+ * Graceful shutdown: stop accepting new connections, wait up to 30s for
+ * in-flight jobs to finish, then exit. Prevents lost jobs on deploys.
+ */
+function setupGracefulShutdown(server) {
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] received ${signal}, draining...`);
+    server.close(() => console.log("[shutdown] server closed"));
+    // Wait up to 30s for active jobs (jobCache entries with processing status)
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const active = [...jobCache.values()].filter(j => j?.status === "processing").length;
+      if (active === 0) break;
+      console.log(`[shutdown] ${active} jobs still processing...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    console.log("[shutdown] exiting");
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  // Catch unhandled rejections to prevent crashes
+  process.on("unhandledRejection", (reason) => {
+    console.error("[unhandledRejection]", reason);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[uncaughtException]", err);
+  });
 }
 
 main().catch((err) => {

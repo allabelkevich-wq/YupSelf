@@ -72,26 +72,27 @@ export async function getBalance(telegramId) {
   return data || { tokens_balance: 0, tariff: "free" };
 }
 
+/**
+ * Atomically spend tokens via a Postgres function.
+ * Check-and-update happens in a single SQL statement — no race condition.
+ */
 export async function spendTokens(telegramId, amount = 100, description = "Генерация") {
-  const { data: user } = await supabase
-    .from("users")
-    .select("tokens_balance")
-    .eq("telegram_id", telegramId)
-    .single();
+  const { data, error } = await supabase.rpc("spend_tokens_atomic", {
+    p_telegram_id: telegramId,
+    p_amount: amount,
+  });
 
-  if (!user || user.tokens_balance < amount) {
-    return { ok: false, balance: user?.tokens_balance || 0 };
+  if (error) {
+    console.error("[spendTokens] rpc error:", error.message);
+    throw new Error("Не удалось списать Искры");
   }
 
-  const { error } = await supabase
-    .from("users")
-    .update({ tokens_balance: user.tokens_balance - amount, updated_at: new Date().toISOString() })
-    .eq("telegram_id", telegramId);
-
-  if (error) throw error;
+  if (!data?.ok) {
+    return { ok: false, balance: data?.balance || 0 };
+  }
 
   await logTokenTransaction(telegramId, -amount, "spend", description);
-  return { ok: true, balance: user.tokens_balance - amount };
+  return { ok: true, balance: data.balance };
 }
 
 export async function addTokens(telegramId, amount, type, description) {
@@ -207,26 +208,27 @@ export async function toggleFavorite(genId, telegramId) {
 
 // ── Stats ───────────────────────────────────────────────────────────
 
+/**
+ * Fetch aggregate stats using SQL count() instead of loading all rows.
+ * Previously this loaded ALL user generations + transactions into memory.
+ */
 export async function getUserStats(telegramId) {
-  const { data: gens } = await supabase
-    .from("generations")
-    .select("created_at")
-    .eq("user_id", telegramId);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayIso = todayStart.toISOString();
 
-  const total = gens?.length || 0;
-  const today = gens?.filter(g => {
-    const d = new Date(g.created_at);
-    const now = new Date();
-    return d.toDateString() === now.toDateString();
-  }).length || 0;
+  // Parallel count queries — each uses SQL count, not row loading
+  const [totalRes, todayRes, spentRes, earnedRes] = await Promise.all([
+    supabase.from("generations").select("id", { count: "exact", head: true }).eq("user_id", telegramId),
+    supabase.from("generations").select("id", { count: "exact", head: true }).eq("user_id", telegramId).gte("created_at", todayIso),
+    supabase.from("token_transactions").select("amount").eq("user_id", telegramId).eq("type", "spend"),
+    supabase.from("token_transactions").select("amount").eq("user_id", telegramId).neq("type", "spend"),
+  ]);
 
-  const { data: txs } = await supabase
-    .from("token_transactions")
-    .select("amount, type")
-    .eq("user_id", telegramId);
-
-  const spent = txs?.filter(t => t.type === "spend").reduce((s, t) => s + Math.abs(t.amount), 0) || 0;
-  const earned = txs?.filter(t => t.type !== "spend").reduce((s, t) => s + t.amount, 0) || 0;
+  const total = totalRes.count || 0;
+  const today = todayRes.count || 0;
+  const spent = (spentRes.data || []).reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+  const earned = (earnedRes.data || []).reduce((s, t) => s + (t.amount || 0), 0);
 
   return { total, today, spent, earned };
 }

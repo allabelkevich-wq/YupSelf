@@ -861,6 +861,13 @@ window.addEventListener("unhandledrejection", function(e) {
         tg.expand();
     }
 
+    // ── apiFetch: always sends Telegram initData for auth ──
+    async function apiFetch(url, opts = {}) {
+        const headers = { ...(opts.headers || {}) };
+        if (tg?.initData) headers["X-Telegram-Init-Data"] = tg.initData;
+        return fetch(url, { ...opts, headers });
+    }
+
     // ── Generation counter (localStorage) ────────────────
     const APP_VERSION = "2";
     const FREE_LIMIT = 100;
@@ -1118,11 +1125,19 @@ window.addEventListener("unhandledrejection", function(e) {
             const tgUser = tg?.initDataUnsafe?.user;
             if (tgUser) {
                 try {
-                    const res = await fetch(`${API}/api/faces/${tgUser.id}`);
+                    const res = await apiFetch(`${API}/api/faces/${tgUser.id}`);
                     const faces = await res.json();
-                    faceSelect.innerHTML = '<option value="">Сохранить новое лицо при генерации</option>';
+                    // Safe DOM construction — no innerHTML
+                    faceSelect.textContent = "";
+                    const opt0 = document.createElement("option");
+                    opt0.value = "";
+                    opt0.textContent = "Сохранить новое лицо при генерации";
+                    faceSelect.appendChild(opt0);
                     for (const f of faces) {
-                        faceSelect.innerHTML += `<option value="${f.id}">${f.name}</option>`;
+                        const opt = document.createElement("option");
+                        opt.value = String(f.id);
+                        opt.textContent = f.name || "Лицо";
+                        faceSelect.appendChild(opt);
                     }
                 } catch {}
             }
@@ -1147,11 +1162,15 @@ window.addEventListener("unhandledrejection", function(e) {
             form.append("face", compressed);
             form.append("telegramId", String(tgUser.id));
             form.append("name", "Моё лицо");
-            const res = await fetch(`${API}/api/face/save`, { method: "POST", body: form });
+            const res = await apiFetch(`${API}/api/face/save`, { method: "POST", body: form });
             const data = await res.json();
             if (data.id) {
                 activeFaceId = data.id;
-                faceSelect.innerHTML += `<option value="${data.id}" selected>Моё лицо</option>`;
+                const opt = document.createElement("option");
+                opt.value = String(data.id);
+                opt.textContent = "Моё лицо";
+                opt.selected = true;
+                faceSelect.appendChild(opt);
                 faceSelect.value = String(data.id);
             }
         } catch (e) { console.error("[face save]", e); }
@@ -1348,15 +1367,19 @@ window.addEventListener("unhandledrejection", function(e) {
         $("#cabName").textContent = cabUser.first_name || cabUser.username || "User";
         $("#cabTariff").textContent = (cabUser.tariff || "free").toUpperCase();
         const avatar = $("#cabAvatar");
+        avatar.textContent = "";
         if (cabUser.avatar_url) {
-            avatar.innerHTML = `<img src="${cabUser.avatar_url}" alt="">`;
+            const img = document.createElement("img");
+            img.src = cabUser.avatar_url;
+            img.alt = "";
+            avatar.appendChild(img);
         } else {
             avatar.textContent = (cabUser.first_name || "?")[0].toUpperCase();
         }
 
         // Load profile data
         try {
-            const res = await fetch(`${API}/api/profile/${tgUser.id}`);
+            const res = await apiFetch(`${API}/api/profile/${tgUser.id}`);
             const data = await res.json();
 
             $("#cabTokens").textContent = data.tokens_balance || 0;
@@ -1370,18 +1393,30 @@ window.addEventListener("unhandledrejection", function(e) {
                 $("#cabRefCode").textContent = `https://t.me/YupSelf_bot?start=ref_${cabUser.referral_code}`;
             }
 
-            // History
+            // History — safe DOM construction (no innerHTML with user data)
             const hist = $("#cabHistory");
-            hist.innerHTML = "";
+            hist.textContent = "";
             if (data.history?.length) {
                 $("#cabEmpty").style.display = "none";
                 for (const gen of data.history) {
                     const div = document.createElement("div");
                     div.className = "cab-history-item";
                     if (gen.image_url) {
-                        div.innerHTML = `<img src="${gen.image_url}" alt="" loading="lazy"><span class="fav ${gen.is_favorite ? 'on' : ''}" data-id="${gen.id}">★</span>`;
+                        const img = document.createElement("img");
+                        img.src = gen.image_url;
+                        img.alt = "";
+                        img.loading = "lazy";
+                        const fav = document.createElement("span");
+                        fav.className = "fav" + (gen.is_favorite ? " on" : "");
+                        fav.dataset.id = String(gen.id);
+                        fav.textContent = "★";
+                        div.appendChild(img);
+                        div.appendChild(fav);
                     } else {
-                        div.innerHTML = `<div style="padding:8px;font-size:10px;color:var(--text-secondary)">${(gen.prompt||'').slice(0,40)}...</div>`;
+                        const inner = document.createElement("div");
+                        inner.style.cssText = "padding:8px;font-size:10px;color:var(--text-secondary)";
+                        inner.textContent = (gen.prompt || "").slice(0, 40) + "...";
+                        div.appendChild(inner);
                     }
                     hist.appendChild(div);
                 }
@@ -1412,19 +1447,27 @@ window.addEventListener("unhandledrejection", function(e) {
             const { packages, merchantAccount } = await res.json();
 
             const box = $("#payPackages");
-            box.innerHTML = "";
+            box.textContent = "";
             for (const pkg of packages) {
                 const div = document.createElement("div");
                 div.style.cssText = "padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:14px; margin-bottom:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
-                div.innerHTML = `
-                    <div>
-                        <div style="font-size:14px; font-weight:700;">${pkg.label}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:16px; font-weight:800; color:var(--accent-1);">${pkg.darai}</div>
-                        <div style="font-size:10px; color:var(--text-secondary);">DARAI</div>
-                    </div>
-                `;
+                const leftWrap = document.createElement("div");
+                const labelEl = document.createElement("div");
+                labelEl.style.cssText = "font-size:14px; font-weight:700;";
+                labelEl.textContent = pkg.label || "";
+                leftWrap.appendChild(labelEl);
+                const rightWrap = document.createElement("div");
+                rightWrap.style.textAlign = "right";
+                const amountEl = document.createElement("div");
+                amountEl.style.cssText = "font-size:16px; font-weight:800; color:var(--accent-1);";
+                amountEl.textContent = String(pkg.darai || "");
+                const unitEl = document.createElement("div");
+                unitEl.style.cssText = "font-size:10px; color:var(--text-secondary);";
+                unitEl.textContent = "DARAI";
+                rightWrap.appendChild(amountEl);
+                rightWrap.appendChild(unitEl);
+                div.appendChild(leftWrap);
+                div.appendChild(rightWrap);
                 div.addEventListener("click", () => startPayment(tgUser.id, pkg.id));
                 box.appendChild(div);
             }
