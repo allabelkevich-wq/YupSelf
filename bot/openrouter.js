@@ -205,15 +205,16 @@ const GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}) {
   const cleanB64 = faceBase64.replace(/^data:image\/\w+;base64,/, "");
 
-  // Truncate visual prompt to ~800 chars to leave room for face instructions
-  // Long prompts cause Gemini to ignore the face reference
-  const visualPrompt = prompt.length > 800 ? prompt.slice(0, 800) + "..." : prompt;
+  // Keep prompt within Gemini limits but preserve face/realism context
+  const visualPrompt = prompt.length > 1500 ? prompt.slice(0, 1500) + "..." : prompt;
 
-  // Face instruction FIRST, short and direct — then visual description
-  const fullPrompt = `Generate a portrait using the attached face photo as reference. ` +
-    `The person's face MUST match the photo exactly — same eyes, nose, lips, face shape, skin tone. ` +
-    `Do NOT change the face. Do NOT use a different person.\n\n` +
-    `Visual style: ${visualPrompt}`;
+  // Face + photorealism instruction — direct and strict
+  const fullPrompt = `PHOTOREALISTIC portrait photograph. The attached photo is the face reference — ` +
+    `preserve EXACT facial features: same eyes, nose, lips, jawline, skin tone, hair color and texture. ` +
+    `The face MUST be clearly recognizable as the same real person. ` +
+    `This is a REAL PHOTO, not an illustration, not a painting, not a cartoon. ` +
+    `Skin must have natural pores and texture. Eyes must be alive and expressive.\n\n` +
+    `${visualPrompt}`;
 
   const MODELS = [
     "gemini-3-pro-image-preview",      // Nano Banana Pro — best quality
@@ -247,7 +248,7 @@ export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}
 
   // Last resort: generate without face (text-only)
   console.log("[face-gen] all multimodal failed, generating text-only...");
-  const textOnlyPrompt = prompt + "\nCreate a portrait of this person showing their unique energy and presence.";
+  const textOnlyPrompt = "Photorealistic portrait photograph. " + prompt + "\nCreate a photorealistic portrait photograph showing this person's unique energy and presence. NOT an illustration, NOT a painting — a REAL PHOTO.";
   return await generateImage(textOnlyPrompt, { ...imageConfig, quality: "pro" });
 }
 

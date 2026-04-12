@@ -374,7 +374,7 @@
 
 ОБЯЗАТЕЛЬНЫЕ 12 СЛОЁВ (пропуск любого = промт неполный):
 
-1. СТИЛЬ/МЕДИУМ — определён знаком Солнца + доминантной стихией. Конкретный: "oil painting with impasto texture" не "красиво".
+1. СТИЛЬ/МЕДИУМ — ВСЕГДА "photorealistic portrait photography" с мистическим измерением. Как фотосессия Annie Leibovitz в магическом мире. НЕ oil painting, НЕ illustration, НЕ watercolor, НЕ digital art, НЕ cartoon. Кожа = живая, фотореалистичная. Свет = кинематографический. Пространство и атмосфера = из другого мира. Стихия и знак влияют на АТМОСФЕРУ, СВЕТ и ЦВЕТ — но НЕ на медиум.
 2. ЦВЕТА — 7-10 конкретных цветов. Каждый цвет = из конкретной планеты/знака. "deep oceanic indigo (эмоциональная глубина)" + "warm terracotta (земная чувственность)" + "faded rose gold (нежность)".
 3. КОМПОЗИЦИЯ — определена домом Солнца. Конкретный ракурс, кадрирование, пропорции.
 4. ОСВЕЩЕНИЕ — определено Луной (знак + дом). Направление, температура, жёсткость/мягкость, тени.
@@ -388,6 +388,8 @@
 12. ЛИЦО (ОБЯЗАТЕЛЬНО) — фото пользователя ВСЕГДА прикреплено как референс. ЭТО ЛИЦО ДОЛЖНО БЫТЬ НА ИЗОБРАЖЕНИИ — узнаваемое, точное, живое. Промт ОБЯЗАН содержать: "The person in this image is the reference photo subject. Preserve their EXACT facial features, bone structure, skin tone, eye color, hair color and texture. The face must be clearly recognizable as the same person. This is NOT a generic face — this is THEIR face in a new context."
 
 КАЖДЫЙ СЛОЙ должен ПРЯМО вытекать из конкретного элемента карты, а не быть абстрактным. Если Марс в Весах в 7 доме → "soft, balanced dynamic tension between two halves of the composition, as if two invisible forces are in a graceful tug-of-war". Если Луна в Рыбах в 12 доме → "ethereal, dissolving background where the edges of the figure blend seamlessly into a vast, luminous ocean of light, as if the subject is half-dreaming, half-awake".
+
+КРИТИЧНО: промт ОБЯЗАН начинаться с "Photorealistic portrait photograph of [person description]". Это НЕ illustration, НЕ painting, НЕ artwork — это ФОТОГРАФИЯ в магическом мире. Стиль = editorial fashion photography с мистической атмосферой.
 
 Верни ТОЛЬКО промт для изображения. Ничего больше. Без кавычек. Без объяснений. Без разбора карты.
 Промт на АНГЛИЙСКОМ.

@@ -1751,7 +1751,16 @@ window.addEventListener("unhandledrejection", function(e) {
 
         try {
             setTimeout(() => { $("#astroLoadingText").textContent = "DeepSeek создаёт визуальный промт..."; }, 3000);
-            setTimeout(() => { $("#astroLoadingText").textContent = "NanoBanana Pro генерирует изображение..."; }, 8000);
+            setTimeout(() => { $("#astroLoadingText").textContent = "Генерирую изображение..."; }, 8000);
+
+            // Live progress during long astro poll
+            const astroTimer = setInterval(() => {
+                const el = $("#astroLoadingText");
+                if (!el || !$("#astroLoading").classList.contains("visible")) { clearInterval(astroTimer); return; }
+                const t = el._startTime ? Math.round((Date.now() - el._startTime) / 1000) : 0;
+                if (t > 15) el.textContent = `Генерирую изображение... ${t} сек`;
+            }, 3000);
+            $("#astroLoadingText")._startTime = Date.now();
 
             const payload = JSON.stringify({
                 name: $("#astroName").value,
@@ -1801,6 +1810,7 @@ window.addEventListener("unhandledrejection", function(e) {
             const data = await pollJob(jobId, 90);
             currentAstroJobId = jobId;
 
+            clearInterval(astroTimer);
             $("#astroLoading").classList.remove("visible");
 
             if (data.imageBase64) {
@@ -1818,6 +1828,7 @@ window.addEventListener("unhandledrejection", function(e) {
             $("#astroResult").scrollIntoView({ behavior: "smooth", block: "center" });
 
         } catch (err) {
+            clearInterval(astroTimer);
             $("#astroLoading").classList.remove("visible");
             alert("Ошибка: " + (err.message || err));
         } finally {
