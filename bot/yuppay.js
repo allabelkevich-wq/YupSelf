@@ -13,18 +13,18 @@ const YUPPAY_WEBHOOK_SECRET = process.env.YUPPAY_WEBHOOK_SECRET;
 // Supabase anon key for the YupLand project (public — used as frontdoor auth for Edge Functions)
 const YUPPAY_SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpramdwYmF3aHh0YWZtd3Nyc2ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMDA3NjgsImV4cCI6MjA3NTg3Njc2OH0.Il2w6Vd40hGnosvI0QJKn2bHlZNrNvnl7UZxB92_vAQ";
 
-// 1 DARAI = 10^24 yocto (NEAR FT standard, 24 decimals)
-const DARAI_DECIMALS = 24n;
-const ONE_DARAI = 10n ** DARAI_DECIMALS;
+// 1 DARAI = 10^18 smallest units (NEP-141 token with 18 decimals)
+const DARAI_DECIMALS = 18;
+const ONE_DARAI = 10n ** BigInt(DARAI_DECIMALS);
 
 /**
- * Convert DARAI number → yocto string (required by API).
- * Example: 1.5 → "1500000000000000000000000"
+ * Convert DARAI number → smallest-unit string (required by API).
+ * Example: 1.5 → "1500000000000000000"
  */
 export function daraiToYocto(amountDarai) {
   const str = String(amountDarai);
   const [intPart, fracPart = ""] = str.split(".");
-  const fracPadded = (fracPart + "0".repeat(24)).slice(0, 24);
+  const fracPadded = (fracPart + "0".repeat(DARAI_DECIMALS)).slice(0, DARAI_DECIMALS);
   const combined = (intPart || "0") + fracPadded;
   return combined.replace(/^0+/, "") || "0";
 }
@@ -35,11 +35,11 @@ export function daraiToYocto(amountDarai) {
  * No USD conversion — fixed DARAI amounts.
  */
 export const YUPPAY_PACKAGES = [
-  { id: "pack_500",   tokens: 500,   darai: 3.5,   label: "500 Искр = 3,5 DARAI",  discount: 0 },
-  { id: "pack_1000",  tokens: 1000,  darai: 7,     label: "1 000 Искр = 7 DARAI",  discount: 0 },
-  { id: "pack_5000",  tokens: 5000,  darai: 31.5,  label: "5 000 Искр = 31,5 DARAI", discount: 10 },
-  { id: "pack_10000", tokens: 10000, darai: 56,    label: "10 000 Искр = 56 DARAI",  discount: 20 },
-  { id: "pack_20000", tokens: 20000, darai: 105,   label: "20 000 Искр = 105 DARAI", discount: 25 },
+  { id: "pack_500",   tokens: 500,   darai: 3_500_000,   label: "500 Искр = 3,5 млн DARAI",  discount: 0 },
+  { id: "pack_1000",  tokens: 1000,  darai: 7_000_000,   label: "1 000 Искр = 7 млн DARAI",  discount: 0 },
+  { id: "pack_5000",  tokens: 5000,  darai: 31_500_000,  label: "5 000 Искр = 31,5 млн DARAI", discount: 10 },
+  { id: "pack_10000", tokens: 10000, darai: 56_000_000,  label: "10 000 Искр = 56 млн DARAI",  discount: 20 },
+  { id: "pack_20000", tokens: 20000, darai: 105_000_000, label: "20 000 Искр = 105 млн DARAI", discount: 25 },
 ];
 
 /**
