@@ -712,8 +712,13 @@ app.post("/api/webhooks/yuppay",
           `✨ Оплата прошла! На баланс зачислено ${tokens} Искр. Открой YupSelf и создавай портреты.`
         );
       } catch (e) {
-        console.warn("[yuppay/webhook] notify failed:", e.message);
+        console.warn("[yuppay/webhook] user notify failed:", e.message);
       }
+
+      // Notify admins about payment
+      await notifyAdmins(
+        `<b>YupPay оплата</b>\nUser: ${telegramId}\nПакет: ${packageId || "—"}\nИскры: +${tokens}\nDarai: ${metadata.order_id || "—"}`
+      );
 
       res.json({ ok: true });
     } catch (err) {
