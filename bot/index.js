@@ -5,7 +5,7 @@ import { enhancePrompt, translatePrompt, generateImage, editImage } from "./open
 import { transcribeAudio } from "./groq.js";
 import supabase, { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite, uploadImage } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
-import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, YUPPAY_PACKAGES } from "./yuppay.js";
+import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, getYupPayPackages, getCurrentRate } from "./yuppay.js";
 import { addTokens } from "./db.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
@@ -715,9 +715,11 @@ app.post("/api/webhooks/yuppay",
         console.warn("[yuppay/webhook] user notify failed:", e.message);
       }
 
-      // Notify admins about payment
+      // Notify admins about payment (with rate for cost tracking)
+      const paidDarai = metadata.darai_amount || "—";
+      const paidRate = metadata.darai_per_iskra || "—";
       await notifyAdmins(
-        `<b>YupPay оплата</b>\nUser: ${telegramId}\nПакет: ${packageId || "—"}\nИскры: +${tokens}\nDarai: ${metadata.order_id || "—"}`
+        `<b>YupPay оплата</b>\nUser: ${telegramId}\nПакет: ${packageId || "—"}\nИскры: +${tokens}\nDarai: ${paidDarai}\nКурс: ${paidRate} DARAI/Искра`
       );
 
       res.json({ ok: true });
@@ -1077,7 +1079,7 @@ app.get("/api/payment/pending/:telegramId", requireOwnResource, async (req, res)
 
 // ── YupPay API ──────────────────────────────────────────────────────
 app.get("/api/yuppay/packages", (_req, res) => {
-  res.json({ packages: YUPPAY_PACKAGES });
+  res.json({ packages: getYupPayPackages(), rate: getCurrentRate() });
 });
 
 // Rate limit: max 5 invoices per minute per user

@@ -30,17 +30,62 @@ export function daraiToYocto(amountDarai) {
 }
 
 /**
- * Pricing for YupSelf Искры packages (in DARAI).
- * 1 generation = 100 Искр. User balance in Supabase `users.tokens_balance`.
- * No USD conversion — fixed DARAI amounts.
+ * Dynamic pricing for YupSelf Искры packages (in DARAI).
+ *
+ * Rate is configurable via env var DARAI_PER_ISKRA (default 7000).
+ * When DARAI market price changes, update the env var — packages recalculate.
+ *
+ * Current rate 7000 DARAI/Искра means:
+ *   500 Искр = 3.5 млн DARAI (base)
+ *   5000 Искр = 31.5 млн DARAI (−10%)
+ *   etc.
  */
-export const YUPPAY_PACKAGES = [
-  { id: "pack_500",   tokens: 500,   darai: 3_500_000,   label: "500 Искр = 3,5 млн DARAI",  discount: 0 },
-  { id: "pack_1000",  tokens: 1000,  darai: 7_000_000,   label: "1 000 Искр = 7 млн DARAI",  discount: 0 },
-  { id: "pack_5000",  tokens: 5000,  darai: 31_500_000,  label: "5 000 Искр = 31,5 млн DARAI", discount: 10 },
-  { id: "pack_10000", tokens: 10000, darai: 56_000_000,  label: "10 000 Искр = 56 млн DARAI",  discount: 20 },
-  { id: "pack_20000", tokens: 20000, darai: 105_000_000, label: "20 000 Искр = 105 млн DARAI", discount: 25 },
+const DARAI_PER_ISKRA = Number(process.env.DARAI_PER_ISKRA) || 7000;
+
+const PACKAGE_TIERS = [
+  { id: "pack_500",   tokens: 500,   discount: 0,  label: "500 Искр" },
+  { id: "pack_1000",  tokens: 1000,  discount: 0,  label: "1 000 Искр" },
+  { id: "pack_5000",  tokens: 5000,  discount: 10, label: "5 000 Искр" },
+  { id: "pack_10000", tokens: 10000, discount: 20, label: "10 000 Искр" },
+  { id: "pack_20000", tokens: 20000, discount: 25, label: "20 000 Искр" },
 ];
+
+function formatDarai(amount) {
+  if (amount >= 1_000_000) {
+    const m = amount / 1_000_000;
+    const s = m % 1 === 0 ? String(m) : m.toFixed(1).replace(".", ",");
+    return s + " млн";
+  }
+  if (amount >= 1_000) return Math.round(amount / 1_000) + "K";
+  return String(amount);
+}
+
+/** Build packages from current rate. */
+export function getYupPayPackages() {
+  const rate = DARAI_PER_ISKRA;
+  return PACKAGE_TIERS.map((t) => {
+    const base = t.tokens * rate;
+    const discounted = base * (1 - t.discount / 100);
+    // Round to nearest 100K for clean display
+    const darai = Math.round(discounted / 100_000) * 100_000;
+    return {
+      id: t.id,
+      tokens: t.tokens,
+      darai,
+      discount: t.discount,
+      label: `${t.label} = ${formatDarai(darai)} DARAI`,
+      rate,
+    };
+  });
+}
+
+/** Current rate (for logging / admin). */
+export function getCurrentRate() {
+  return DARAI_PER_ISKRA;
+}
+
+// Legacy export — computed from current rate
+export const YUPPAY_PACKAGES = getYupPayPackages();
 
 /**
  * Low-level call to YupPay API.
@@ -88,16 +133,23 @@ async function _callYupPay(action, body = {}) {
  * @returns {{ invoiceId, payUrl, payTgUrl, amountDarai, tokens }}
  */
 export async function createInvoice({ packageId, telegramId, publicBaseUrl }) {
-  const pkg = YUPPAY_PACKAGES.find((p) => p.id === packageId);
+  // Use fresh packages from current rate
+  const packages = getYupPayPackages();
+  const pkg = packages.find((p) => p.id === packageId);
   if (!pkg) throw new Error(`Unknown package: ${packageId}`);
 
   const amountRaw = daraiToYocto(pkg.darai);
+  const rate = getCurrentRate();
   const metadata = {
     package_id: pkg.id,
     tokens: pkg.tokens,
     telegram_chat_id: String(telegramId),
     order_id: `yupself_${telegramId}_${Date.now()}`,
+    darai_per_iskra: String(rate),
+    darai_amount: String(pkg.darai),
   };
+
+  console.log(`[yuppay] invoice: ${pkg.tokens} Искр, ${pkg.darai} DARAI, rate=${rate} DARAI/Искра`);
 
   const data = await _callYupPay("create_invoice", {
     token_contract_id: "darai.tkn.near",
@@ -114,6 +166,7 @@ export async function createInvoice({ packageId, telegramId, publicBaseUrl }) {
     amountDarai: pkg.darai,
     tokens: pkg.tokens,
     packageId: pkg.id,
+    rate,
     status: data.invoice?.status || "pending",
   };
 }
