@@ -125,32 +125,45 @@ async function logTokenTransaction(telegramId, amount, type, description) {
 
 /**
  * Upload base64 image to Supabase Storage and return public URL.
+ * Retries once on failure.
  */
+let _bucketChecked = false;
 export async function uploadImage(imageBase64, filename) {
   if (!imageBase64) return null;
 
-  try {
-    // Ensure bucket exists
-    const { data: buckets } = await supabase.storage.listBuckets();
-    if (!buckets?.find(b => b.name === "images")) {
-      await supabase.storage.createBucket("images", { public: true });
+  const buf = Buffer.from(imageBase64, "base64");
+  const path = `gen/${filename || Date.now() + ".png"}`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      // Check bucket exists only once per process lifetime
+      if (!_bucketChecked) {
+        const { data: buckets } = await supabase.storage.listBuckets();
+        if (!buckets?.find(b => b.name === "images")) {
+          await supabase.storage.createBucket("images", { public: true });
+        }
+        _bucketChecked = true;
+      }
+
+      const { error } = await supabase.storage
+        .from("images")
+        .upload(path, buf, { contentType: "image/png", upsert: true });
+
+      if (error) {
+        console.error(`[upload] attempt ${attempt + 1}:`, error.message);
+        if (attempt === 0) continue;
+        return null;
+      }
+
+      const { data: urlData } = supabase.storage.from("images").getPublicUrl(path);
+      return urlData?.publicUrl || null;
+    } catch (e) {
+      console.error(`[upload] attempt ${attempt + 1}:`, e.message);
+      if (attempt === 0) continue;
+      return null;
     }
-
-    const buf = Buffer.from(imageBase64, "base64");
-    const path = `gen/${filename || Date.now() + ".png"}`;
-
-    const { error } = await supabase.storage
-      .from("images")
-      .upload(path, buf, { contentType: "image/png", upsert: true });
-
-    if (error) { console.error("[upload]", error.message); return null; }
-
-    const { data: urlData } = supabase.storage.from("images").getPublicUrl(path);
-    return urlData?.publicUrl || null;
-  } catch (e) {
-    console.error("[upload]", e.message);
-    return null;
   }
+  return null;
 }
 
 // ── Generation history ──────────────────────────────────────────────

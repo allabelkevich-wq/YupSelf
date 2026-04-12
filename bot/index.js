@@ -1150,6 +1150,15 @@ app.post("/api/astro/generate", genRateLimit, async (req, res) => {
               completed_at: new Date().toISOString(),
             });
           } catch (e) { console.error("[astro db]", e.message); }
+          // Save to generations table so it appears in profile history
+          try {
+            const jobData = await getJob(jobId);
+            await saveGeneration(Number(telegramId), {
+              prompt: result.astroPrompt || intention || "Персональный расклад",
+              aspectRatio: aspectRatio || "1:1",
+              imageUrl: jobData?.imageUrl || null,
+            });
+          } catch (e) { console.error("[astro save gen]", e.message); }
         }
       } catch (err) {
         console.error(`[astro job ${jobId}] error:`, err.message);

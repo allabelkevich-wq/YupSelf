@@ -816,6 +816,15 @@
         </div>
     </div>
 
+    <!-- ═══ IMAGE VIEWER MODAL ═══ -->
+    <div id="imgViewerModal" style="display:none; position:fixed; inset:0; z-index:250; background:rgba(0,0,0,0.92); align-items:center; justify-content:center; flex-direction:column; padding:16px; gap:12px;" onclick="if(event.target===this)closeImgViewer()">
+        <img id="imgViewerImg" style="max-width:100%; max-height:75vh; border-radius:14px; object-fit:contain;" alt="">
+        <div style="display:flex; gap:10px;">
+            <button id="imgViewerDl" style="padding:10px 24px; border-radius:9999px; background:linear-gradient(135deg, var(--accent-1), var(--accent-2)); color:white; border:none; font-size:14px; font-weight:700; cursor:pointer;">Скачать</button>
+            <button onclick="closeImgViewer()" style="padding:10px 24px; border-radius:9999px; background:var(--surface); color:var(--text-primary); border:1px solid var(--border); font-size:14px; font-weight:700; cursor:pointer;">Закрыть</button>
+        </div>
+    </div>
+
     <!-- ═══ BOTTOM NAVIGATION ═══ -->
     <nav class="bottom-nav">
         <button class="nav-tab active" data-tab="tabGenerate">
@@ -1410,6 +1419,15 @@ window.addEventListener("unhandledrejection", function(e) {
                         fav.className = "fav" + (gen.is_favorite ? " on" : "");
                         fav.dataset.id = String(gen.id);
                         fav.textContent = "★";
+                        fav.addEventListener("click", async (e) => {
+                            e.stopPropagation();
+                            try {
+                                const r = await apiFetch(`${API}/api/favorite/${gen.id}`, { method: "POST" });
+                                const d = await r.json();
+                                fav.classList.toggle("on", d.isFavorite);
+                            } catch {}
+                        });
+                        div.addEventListener("click", () => openImgViewer(gen.image_url));
                         div.appendChild(img);
                         div.appendChild(fav);
                     } else {
@@ -1427,6 +1445,38 @@ window.addEventListener("unhandledrejection", function(e) {
             console.error("[cabinet]", e);
         }
     }
+
+    // ── Image Viewer ──────────────────────────────────────
+    function openImgViewer(url) {
+        const modal = $("#imgViewerModal");
+        const img = $("#imgViewerImg");
+        img.src = url;
+        modal.style.display = "flex";
+
+        const dlBtn = $("#imgViewerDl");
+        dlBtn.onclick = async () => {
+            try {
+                const resp = await fetch(url);
+                const blob = await resp.blob();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `yupself-${Date.now()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(a.href);
+            } catch {
+                // Fallback: open in new tab
+                if (tg?.openLink) tg.openLink(url);
+                else window.open(url, "_blank");
+            }
+        };
+    }
+
+    window.closeImgViewer = () => {
+        $("#imgViewerModal").style.display = "none";
+        $("#imgViewerImg").src = "";
+    };
 
     // ── DaraiPay ─────────────────────────────────────────
     let currentPaymentId = null;
