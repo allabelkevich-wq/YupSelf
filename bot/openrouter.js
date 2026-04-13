@@ -205,16 +205,25 @@ const GOOGLE_AI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}) {
   const cleanB64 = faceBase64.replace(/^data:image\/\w+;base64,/, "");
 
-  // Keep prompt within Gemini limits but preserve face/realism context
-  const visualPrompt = prompt.length > 1500 ? prompt.slice(0, 1500) + "..." : prompt;
+  // Best practice: identity header FIRST → hard constraints → then visual scene
+  // Source: Gemini character consistency guide (apiyi.com, Google developers blog)
+  const visualPrompt = prompt.length > 1200 ? prompt.slice(0, 1200) : prompt;
 
-  // Face + photorealism instruction — direct and strict
-  const fullPrompt = `PHOTOREALISTIC portrait photograph. The attached photo is the face reference — ` +
-    `preserve EXACT facial features: same eyes, nose, lips, jawline, skin tone, hair color and texture. ` +
-    `The face MUST be clearly recognizable as the same real person. ` +
-    `This is a REAL PHOTO, not an illustration, not a painting, not a cartoon. ` +
-    `Skin must have natural pores and texture. Eyes must be alive and expressive.\n\n` +
-    `${visualPrompt}`;
+  const fullPrompt = [
+    "CHARACTER REFERENCE: The attached photo shows the exact person to depict in this image.",
+    "",
+    "STRICT FACE RULES:",
+    "- Preserve exact facial structure, eye shape and color, nose width, jawline, lip shape from reference",
+    "- Preserve skin tone, skin texture, hair color and texture from reference",
+    "- Do NOT change: facial proportions, eye spacing, nose bridge, chin shape, hairline",
+    "- Realistic skin with visible pores and natural texture — not smooth or plastic",
+    "- The person in the result MUST be recognizable as the same real person from the photo",
+    "",
+    "SCENE DESCRIPTION:",
+    visualPrompt,
+    "",
+    "STYLE: Photorealistic portrait photograph, 85mm lens, cinematic lighting.",
+  ].join("\n");
 
   const MODELS = [
     "gemini-3-pro-image-preview",      // Nano Banana Pro — best quality
