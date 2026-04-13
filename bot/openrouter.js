@@ -134,24 +134,29 @@ export async function generateImage(prompt, imageConfig = {}) {
 
   const model = imageConfig.quality === "fast" ? IMAGE_MODEL_FLASH : IMAGE_MODEL_PRO;
 
-  // Attempt 1: laozhang.ai (primary — cheaper, $0.05 vs $0.134)
+  // Attempt 1: laozhang Pro -c channel
   if (LAOZHANG_API_KEY) {
     try {
       const laoModel = imageConfig.quality === "fast" ? "gemini-2.5-flash-image" : IMAGE_MODEL_FALLBACK;
-      const result = await _callImageApi(
-        LAOZHANG_URL,
-        LAOZHANG_API_KEY,
-        laoModel,
-        prompt,
-        config
-      );
+      const result = await _callImageApi(LAOZHANG_URL, LAOZHANG_API_KEY, laoModel, prompt, config);
       if (result) return result;
     } catch (err) {
-      console.warn("[image] laozhang failed:", err.message);
+      console.warn("[image] laozhang -c failed:", err.message);
     }
   }
 
-  // Attempt 2: laozhang Flash (if Pro was rate-limited)
+  // Attempt 2: laozhang Pro (without -c suffix — different routing channel)
+  if (LAOZHANG_API_KEY && imageConfig.quality !== "fast") {
+    try {
+      console.log("[image] trying laozhang Pro (no -c)...");
+      const result = await _callImageApi(LAOZHANG_URL, LAOZHANG_API_KEY, "gemini-3-pro-image-preview", prompt, config);
+      if (result) return result;
+    } catch (err) {
+      console.warn("[image] laozhang Pro failed:", err.message);
+    }
+  }
+
+  // Attempt 3: laozhang Flash (if Pro was rate-limited)
   if (LAOZHANG_API_KEY && imageConfig.quality !== "fast") {
     try {
       console.log("[image] trying laozhang Flash fallback...");
@@ -361,7 +366,8 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
     const reqContent = [...content.slice(0, -1), { type: "text", text: prompts[attempt] }];
 
     const body = {
-      model: LAOZHANG_API_KEY ? IMAGE_MODEL_FALLBACK : IMAGE_MODEL_PRO,
+      // Try -c first, fallback to non-c in retry loop
+      model: LAOZHANG_API_KEY ? (attempt === 0 ? IMAGE_MODEL_FALLBACK : "gemini-3-pro-image-preview") : IMAGE_MODEL_PRO,
       messages: [{ role: "user", content: reqContent }],
       max_tokens: 8192,
     };
