@@ -3,10 +3,9 @@ import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
 import { enhancePrompt, translatePrompt, generateImage, editImage } from "./openrouter.js";
 import { transcribeAudio } from "./groq.js";
-import supabase, { getOrCreateUser, getBalance, spendTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite, uploadImage } from "./db.js";
+import supabase, { getOrCreateUser, getBalance, spendTokens, addTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite, uploadImage } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
 import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, getYupPayPackages, getCurrentRate } from "./yuppay.js";
-import { addTokens } from "./db.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
 
