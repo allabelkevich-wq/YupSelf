@@ -876,6 +876,15 @@ app.post("/api/generate", genRateLimit, async (req, res) => {
     const { prompt, style, aspectRatio, imageSize, quality } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
 
+    // Spend 100 Iskry per generation (if user is authenticated)
+    const telegramId = req.body.telegramId ? Number(req.body.telegramId) : null;
+    if (telegramId) {
+      const spend = await spendTokens(telegramId, 100, "Генерация изображения");
+      if (!spend.ok) {
+        return res.status(402).json({ error: "insufficient_balance", balance: spend.balance, message: "Недостаточно Искр" });
+      }
+    }
+
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     await setJob(jobId, { status: "processing", prompt });
 
@@ -888,8 +897,6 @@ app.post("/api/generate", genRateLimit, async (req, res) => {
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("Generation timeout (120s)")), 120000)
     );
-
-    const telegramId = req.body.telegramId || null;
 
     // Safe background execution — all errors captured
     (async () => {
@@ -1107,6 +1114,14 @@ app.post("/api/astro/generate", genRateLimit, async (req, res) => {
     console.log("[astro] request:", JSON.stringify({ name, birthdate, birthplace, birthtime, gender, hasFace: !!(faceBase64 || faceId) }));
     if (!birthdate || !birthplace) return res.status(400).json({ error: "birthdate and birthplace required" });
 
+    // Spend 100 Iskry per astro generation
+    if (telegramId) {
+      const spend = await spendTokens(Number(telegramId), 100, "Астро-портрет");
+      if (!spend.ok) {
+        return res.status(402).json({ error: "insufficient_balance", balance: spend.balance, message: "Недостаточно Искр" });
+      }
+    }
+
     const jobId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     await setJob(jobId, { status: "processing", type: "astro" });
 
@@ -1208,6 +1223,14 @@ app.post("/api/edit", genRateLimit, upload.array("images", 5), async (req, res) 
     const faceId = Number(req.body.faceId) || null;
     const telegramId = Number(req.body.telegramId) || null;
     console.log("[edit] images:", req.files.length, "faceId:", faceId, "prompt:", prompt.slice(0, 50));
+
+    // Spend 100 Iskry per edit
+    if (telegramId) {
+      const spend = await spendTokens(telegramId, 100, "Редактирование");
+      if (!spend.ok) {
+        return res.status(402).json({ error: "insufficient_balance", balance: spend.balance, message: "Недостаточно Искр" });
+      }
+    }
 
     // If face memory enabled — prepend saved face image to reference list
     let facePromptSuffix = "";

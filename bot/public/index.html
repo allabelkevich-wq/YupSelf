@@ -536,9 +536,9 @@
             <button class="chip on" data-v="pro">Pro (~25 сек)</button>
         </div>
 
-        <div class="counter" id="counter">Генераций: <b id="genCount">0</b> из <b>100</b></div>
+        <div class="counter" id="counter">Баланс: <b id="iskryBalance">...</b> Искр</div>
         <button class="gen-btn" id="genBtn" style="margin-top:8px;">Сгенерировать</button>
-        <div class="limit-msg" id="limitMsg">Бесплатные генерации закончились. Скоро здесь появится оплата.</div>
+        <div class="limit-msg" id="limitMsg">Искры закончились. Пополни баланс в Кабинете.</div>
 
         <!-- Loading -->
         <div class="loading-wrap" id="loading">
@@ -878,27 +878,39 @@ window.addEventListener("unhandledrejection", function(e) {
     }
 
     // ── Generation counter (localStorage) ────────────────
-    const APP_VERSION = "2";
-    const FREE_LIMIT = 100;
     // Safe localStorage wrapper (disabled in data: URLs and some WebViews)
     const storage = {
         get(k) { try { return localStorage.getItem(k); } catch { return null; } },
         set(k, v) { try { localStorage.setItem(k, v); } catch {} },
     };
-    if (storage.get("yupself_version") !== APP_VERSION) {
-        storage.set("yupself_version", APP_VERSION);
-        storage.set("yupself_gens", "0");
-    }
-    let genCount = parseInt(storage.get("yupself_gens") || "0", 10);
 
-    function updateCounter() {
-        $("#genCount").textContent = genCount;
-        if (genCount >= FREE_LIMIT) {
+    // Real balance from server (not localStorage)
+    let iskryBalance = 0;
+
+    async function loadBalance() {
+        const tgUser = tg?.initDataUnsafe?.user;
+        if (!tgUser) { updateBalanceUI(); return; }
+        try {
+            const res = await apiFetch(`${API}/api/profile/${tgUser.id}`);
+            if (res.ok) {
+                const data = await res.json();
+                iskryBalance = data.tokens_balance || 0;
+            }
+        } catch {}
+        updateBalanceUI();
+    }
+
+    function updateBalanceUI() {
+        $("#iskryBalance").textContent = iskryBalance;
+        if (iskryBalance < 100) {
             $("#genBtn").disabled = true;
             $("#limitMsg").classList.add("visible");
+        } else {
+            $("#genBtn").disabled = false;
+            $("#limitMsg").classList.remove("visible");
         }
     }
-    updateCounter();
+    loadBalance(); // load real balance from server on startup
 
     let imgData = null;
     let refFiles = []; // File objects for reference images
@@ -1001,7 +1013,7 @@ window.addEventListener("unhandledrejection", function(e) {
     async function generate() {
         const text = $("#prompt").value.trim();
         if (!text) { $("#prompt").focus(); return; }
-        if (genCount >= FREE_LIMIT) { $("#limitMsg").classList.add("visible"); return; }
+        if (iskryBalance < 100) { $("#limitMsg").classList.add("visible"); return; }
 
         const btn = $("#genBtn");
         const loading = $("#loading");
@@ -1044,6 +1056,7 @@ window.addEventListener("unhandledrejection", function(e) {
                     if (attempt > 0) { console.log("[edit] retry", attempt + 1); await new Promise(r => setTimeout(r, 2000)); }
                     try {
                         const editRes = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                        if (editRes.status === 402) throw new Error("Искры закончились. Пополни баланс в Кабинете.");
                         if (!editRes.ok) { console.warn("[edit] HTTP", editRes.status); continue; }
                         const editData = await editRes.json();
                         if (editData.jobId) editJobId = editData.jobId;
@@ -1069,11 +1082,12 @@ window.addEventListener("unhandledrejection", function(e) {
                             headers: { "Content-Type": "application/json" },
                             body: genPayload,
                         });
+                        if (startRes.status === 402) throw new Error("Искры закончились. Пополни баланс в Кабинете.");
                         if (startRes.ok) {
                             const d = await startRes.json();
                             if (d.jobId) { jobId = d.jobId; break; }
                         }
-                    } catch (e) { if (attempt === 2) throw e; }
+                    } catch (e) { if (e.message.includes("Искры") || attempt === 2) throw e; }
                     await new Promise(r => setTimeout(r, 2000));
                 }
                 if (!jobId) throw new Error("Не удалось запустить генерацию");
@@ -1097,9 +1111,10 @@ window.addEventListener("unhandledrejection", function(e) {
             $("#accBody").textContent = data.enhancedPrompt || text;
 
             // Increment counter
-            genCount++;
-            storage.set("yupself_gens", String(genCount));
-            updateCounter();
+            // Refresh real balance from server after generation
+            iskryBalance = Math.max(0, iskryBalance - 100); // optimistic update
+            updateBalanceUI();
+            loadBalance(); // sync with server
 
             setTimeout(() => {
                 loading.classList.remove("visible");
@@ -1792,6 +1807,7 @@ window.addEventListener("unhandledrejection", function(e) {
                         body: payload,
                     });
                     dlog("HTTP " + res.status);
+                    if (res.status === 402) throw new Error("Искры закончились. Пополни баланс в Кабинете.");
                     const text = await res.text();
                     dlog("body: " + text.slice(0, 200));
                     try {
