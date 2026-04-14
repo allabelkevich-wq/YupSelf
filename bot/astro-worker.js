@@ -324,15 +324,14 @@ export async function generateAstroImage(params) {
   // ── Step 4: Generate image ──────────────────────────────
   console.log(`[astro] Step 4: Generating image...`);
 
-  let result;
-  if (faceImageB64) {
-    // Face mode: use Google AI Studio for multimodal (face → image)
-    console.log(`[astro] Using face photo, calling generateImageWithFace...`);
-    result = await generateImageWithFace(imagePrompt, faceImageB64, { aspectRatio });
-  } else {
-    // Generate from scratch (text-only)
-    result = await generateImage(imagePrompt, { aspectRatio, quality: "pro" });
+  // LAW: Face is REQUIRED for astro portrait — no abstract portraits
+  if (!faceImageB64) {
+    throw new Error("Фото лица обязательно для астро-портрета");
   }
+
+  let result;
+  console.log(`[astro] Using face photo, calling generateImageWithFace...`);
+  result = await generateImageWithFace(imagePrompt, faceImageB64, { aspectRatio });
 
   console.log(`[astro] Image generated! base64: ${(result.imageBase64 || "").length} chars`);
 
