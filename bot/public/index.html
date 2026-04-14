@@ -632,8 +632,9 @@
 
             <div class="cab-balance">
                 <div class="cab-balance-num" id="cabTokens">0</div>
-                <div class="cab-balance-label">токенов</div>
-                <button class="cab-topup" id="cabTopup">Пополнить</button>
+                <div class="cab-balance-label">Искр</div>
+                <div style="font-size:12px; color:var(--text-secondary); margin-top:6px;" id="cabIskryInfo">= <span id="cabGensLeft">0</span> генераций</div>
+                <button class="cab-topup" id="cabTopup">Пополнить в DARAI</button>
             </div>
 
             <div class="cab-stats">
@@ -1406,7 +1407,9 @@ window.addEventListener("unhandledrejection", function(e) {
             const res = await apiFetch(`${API}/api/profile/${tgUser.id}`);
             const data = await res.json();
 
-            $("#cabTokens").textContent = data.tokens_balance || 0;
+            const bal = data.tokens_balance || 0;
+            $("#cabTokens").textContent = bal;
+            $("#cabGensLeft").textContent = Math.floor(bal / 100);
             $("#cabToday").textContent = data.stats?.today || 0;
             $("#cabTotal").textContent = data.stats?.total || 0;
             $("#cabSpent").textContent = data.stats?.spent || 0;
