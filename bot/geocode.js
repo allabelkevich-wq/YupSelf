@@ -324,26 +324,46 @@ function guessRegionCoords(fullAddress) {
   return null;
 }
 
-// ─── Основной fetch к Nominatim ─────────────────────────────────────────────
-async function fetchOne(query) {
-  const params = new URLSearchParams({ q: query, format: "json", limit: "1" });
-  try {
-    const res = await fetch(`${NOMINATIM_URL}?${params}`, {
-      headers: { "User-Agent": "YupSoulBot/1.0 (astro birth place)" },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const first = Array.isArray(data) ? data[0] : null;
-    if (!first || first.lat == null || first.lon == null) return null;
-    return { lat: Number(first.lat), lon: Number(first.lon), display_name: first.display_name };
-  } catch (e) {
-    console.warn("[geocode] fetchOne error:", e?.message);
-    return null;
-  }
+// ─── Global Nominatim queue (policy: 1 req/sec) ─────────────────────────────
+// Without this, parallel /api/astro/generate requests could hit Nominatim
+// concurrently and get the IP banned. The gate serialises ALL calls in
+// this process and enforces a minimum gap between releases.
+const DELAY = 1100; // Nominatim policy: ≥1 req/sec
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let _nominatimChain = Promise.resolve();
+export function nominatimSchedule(fn) {
+  const run = _nominatimChain.then(async () => {
+    const result = await fn();
+    // Hold the gate for DELAY *after* the request finishes, so the next
+    // call can't start until at least DELAY ms have passed.
+    await sleep(DELAY);
+    return result;
+  });
+  // Keep the chain alive even if `fn` throws
+  _nominatimChain = run.catch(() => {});
+  return run;
 }
 
-const DELAY = 1100; // Nominatim policy: 1 req/sec
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// ─── Основной fetch к Nominatim ─────────────────────────────────────────────
+async function fetchOne(query) {
+  return nominatimSchedule(async () => {
+    const params = new URLSearchParams({ q: query, format: "json", limit: "1" });
+    try {
+      const res = await fetch(`${NOMINATIM_URL}?${params}`, {
+        headers: { "User-Agent": "YupSelf/1.0 (astro birth place)" },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const first = Array.isArray(data) ? data[0] : null;
+      if (!first || first.lat == null || first.lon == null) return null;
+      return { lat: Number(first.lat), lon: Number(first.lon), display_name: first.display_name };
+    } catch (e) {
+      console.warn("[geocode] fetchOne error:", e?.message);
+      return null;
+    }
+  });
+}
 
 /** Google Geocoding API — приоритетный источник (ЗАКОН №30). Возвращает { lat, lon, display_name } или null. */
 async function fetchGoogleGeocode(address) {

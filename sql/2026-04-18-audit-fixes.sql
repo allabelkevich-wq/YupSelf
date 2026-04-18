@@ -55,3 +55,19 @@ CREATE TABLE IF NOT EXISTS processed_invoices (
   package_id   TEXT,
   processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ─────────────────────────────────────────────────────────────
+-- 4) Jobs: owner_id для owner-check + rating для оценок (P2).
+--    owner_id нужен, чтобы /api/job/:id и /api/download/:id
+--    после рестарта pod'а могли проверить, что к джобу обращается
+--    его создатель (иначе угадав случайный jobId, можно было бы
+--    прочитать чужой результат).
+--    rating — 1..5 звёзд, nullable; пишется POST /api/job/:id/rating.
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS owner_id BIGINT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS rating   SMALLINT
+  CHECK (rating IS NULL OR rating BETWEEN 1 AND 5);
+
+-- Индекс для поиска зомби-джобов на старте ("processing" + старая updated_at)
+CREATE INDEX IF NOT EXISTS idx_jobs_status_updated
+  ON jobs (status, updated_at);

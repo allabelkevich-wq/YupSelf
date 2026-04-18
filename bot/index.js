@@ -8,6 +8,7 @@ import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACC
 import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, getYupPayPackages, getCurrentRate } from "./yuppay.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
+import { nominatimSchedule } from "./geocode.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -850,6 +851,11 @@ async function ensureJobsTable() {
   return false;
 }
 
+// If a "processing" job hasn't been touched for longer than this, the worker
+// almost certainly died (pod restart, crash, SIGTERM). Treat it as an error
+// so polling clients stop spinning forever.
+const ZOMBIE_JOB_MS = 3 * 60 * 1000; // 3 min > longest generation timeout (120s)
+
 async function setJob(jobId, data) {
   jobCache.set(jobId, data);
   if (!(await ensureJobsTable())) return;
@@ -859,6 +865,7 @@ async function setJob(jobId, data) {
       status: data.status,
       type: data.type || "generate",
       error: data.error || null,
+      owner_id: data.ownerId || null,
       prompt: data.prompt || data.astroPrompt || null,
       image_url: null,
       result_json: null,
@@ -886,7 +893,19 @@ async function setJob(jobId, data) {
 async function getJob(jobId) {
   // Fast path: in-memory cache
   const cached = jobCache.get(jobId);
-  if (cached) return cached;
+  if (cached) {
+    // Zombie check even for in-memory entries (worker could have crashed silently)
+    if (cached.status === "processing") {
+      const ts = jobCacheTs.get(jobId);
+      if (ts && Date.now() - ts > ZOMBIE_JOB_MS) {
+        console.warn(`[jobs] zombie (cache) ${jobId} — marking error`);
+        cached.status = "error";
+        cached.error = "Сервер прервал выполнение. Искры возвращены.";
+        try { await refundZombieJob(jobId, cached); } catch {}
+      }
+    }
+    return cached;
+  }
 
   // Slow path: read from Supabase (survives restarts)
   if (!(await ensureJobsTable())) return null;
@@ -903,14 +922,81 @@ async function getJob(jobId) {
       type: data.type,
       error: data.error,
       prompt: data.prompt,
+      ownerId: data.owner_id || null,
       imageUrl: data.image_url,
     };
     if (data.result_json) {
       try { Object.assign(result, JSON.parse(data.result_json)); } catch {}
     }
+
+    // Zombie check: processing entry that hasn't been touched for a long time
+    if (result.status === "processing" && data.updated_at) {
+      const age = Date.now() - new Date(data.updated_at).getTime();
+      if (age > ZOMBIE_JOB_MS) {
+        console.warn(`[jobs] zombie (db) ${jobId} age=${Math.round(age/1000)}s — marking error`);
+        result.status = "error";
+        result.error = "Сервер прервал выполнение. Искры возвращены.";
+        // Persist the transition + refund (both are idempotent-safe-ish)
+        try {
+          await supabase.from("jobs").update({ status: "error", error: result.error, updated_at: new Date().toISOString() }).eq("job_id", jobId).eq("status", "processing");
+          await refundZombieJob(jobId, result);
+        } catch (e) { console.error("[jobs] zombie handling failed:", e.message); }
+      }
+    }
     return result;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Refund Iskry for a zombie job, guarded by a DB flag so we never refund twice.
+ * Uses `result_json.refunded = true` as a simple idempotency marker.
+ */
+async function refundZombieJob(jobId, jobData) {
+  if (!jobData?.ownerId) return;
+  try {
+    const { data: row } = await supabase.from("jobs").select("result_json").eq("job_id", jobId).single();
+    let parsed = {};
+    if (row?.result_json) { try { parsed = JSON.parse(row.result_json); } catch {} }
+    if (parsed.refunded) return; // already refunded
+    await refundTokens(Number(jobData.ownerId), 100, "Возврат за прерванную генерацию");
+    parsed.refunded = true;
+    await supabase.from("jobs").update({ result_json: JSON.stringify(parsed), updated_at: new Date().toISOString() }).eq("job_id", jobId);
+    console.log(`[jobs] zombie refund 100 Iskry to ${jobData.ownerId} (job ${jobId})`);
+  } catch (e) {
+    console.error(`[jobs] zombie refund failed for ${jobId}:`, e.message);
+  }
+}
+
+/**
+ * On startup, scan Supabase for any jobs still marked "processing" and
+ * declare them zombies. This is the only way to recover from a pod crash
+ * where no client ever polls the lost job.
+ */
+async function cleanupZombieJobsOnStartup() {
+  if (!(await ensureJobsTable())) return;
+  try {
+    const cutoff = new Date(Date.now() - ZOMBIE_JOB_MS).toISOString();
+    const { data } = await supabase
+      .from("jobs")
+      .select("job_id, owner_id, result_json, updated_at")
+      .eq("status", "processing")
+      .lt("updated_at", cutoff);
+
+    if (!data?.length) return;
+    console.log(`[jobs] startup cleanup: ${data.length} zombie(s)`);
+
+    for (const row of data) {
+      try {
+        await supabase.from("jobs")
+          .update({ status: "error", error: "Сервер прервал выполнение. Искры возвращены.", updated_at: new Date().toISOString() })
+          .eq("job_id", row.job_id).eq("status", "processing");
+        await refundZombieJob(row.job_id, { ownerId: row.owner_id });
+      } catch (e) { console.error(`[jobs] startup cleanup ${row.job_id}:`, e.message); }
+    }
+  } catch (e) {
+    console.error("[jobs] startup cleanup error:", e.message);
   }
 }
 
@@ -1019,6 +1105,41 @@ app.get("/api/job/:id", async (req, res) => {
     }
   }
   res.json(job);
+});
+
+// Save user rating for a generated image (1-5 stars)
+app.post("/api/job/:id/rating", requireTelegramAuth, async (req, res) => {
+  try {
+    const jobId = String(req.params.id || "");
+    const rating = Number(req.body?.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: "rating must be 1..5" });
+    }
+    const job = await getJob(jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    if (job.ownerId && Number(job.ownerId) !== Number(req.tgUser.id)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (await ensureJobsTable()) {
+      const { error } = await supabase
+        .from("jobs")
+        .update({ rating, updated_at: new Date().toISOString() })
+        .eq("job_id", jobId);
+      if (error) {
+        // Graceful: column missing pre-migration — don't 500
+        const msg = (error.message || "").toLowerCase();
+        if (msg.includes("rating")) {
+          console.warn("[rating] column missing — run migration");
+          return res.json({ ok: true, persisted: false });
+        }
+        throw error;
+      }
+    }
+    res.json({ ok: true, persisted: true });
+  } catch (err) {
+    console.error("[rating]", err.message);
+    res.status(500).json({ error: "Не удалось сохранить оценку" });
+  }
 });
 
 // Download image as file (works in Telegram WebView)
@@ -1306,12 +1427,14 @@ app.get("/api/places", async (req, res) => {
   try {
     const q = req.query.q;
     if (!q || q.length < 2) return res.json([]);
-    // Use Nominatim for place suggestions
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&accept-language=ru`;
-    const r = await fetch(url, { headers: { "User-Agent": "YupSelf/1.0" } });
-    if (!r.ok) return res.json([]);
-    const data = await r.json();
-    res.json(data.map(d => ({
+    // Use Nominatim for place suggestions (serialised to 1 req/sec)
+    const data = await nominatimSchedule(async () => {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&accept-language=ru`;
+      const r = await fetch(url, { headers: { "User-Agent": "YupSelf/1.0" } });
+      if (!r.ok) return [];
+      return r.json();
+    });
+    res.json((data || []).map(d => ({
       name: d.display_name?.split(",").slice(0, 2).join(",").trim(),
       fullName: d.display_name,
       lat: Number(d.lat),
@@ -1450,6 +1573,8 @@ async function main() {
           await bot.api.setWebhook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
           await setupBotMenu();
           console.log(`YupSelf webhook set (${WEBHOOK_URL})`);
+          // Reap jobs that were interrupted by the previous pod's death
+          await cleanupZombieJobsOnStartup();
           const ts = new Date().toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
           await notifyAdmins(`<b>YupSelf обновлён</b>\n${ts} MSK`);
         } catch (err) {

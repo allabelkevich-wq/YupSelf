@@ -1909,13 +1909,23 @@ window.addEventListener("unhandledrejection", function(e) {
 
     // Rating stars
     $$(".rate-star").forEach(star => {
-        star.addEventListener("click", () => {
+        star.addEventListener("click", async () => {
             const r = Number(star.dataset.r);
             $$(".rate-star").forEach(s => {
                 s.style.opacity = Number(s.dataset.r) <= r ? "1" : "0.3";
                 s.style.color = Number(s.dataset.r) <= r ? "var(--accent-1)" : "";
             });
-            // TODO: save rating to Supabase
+            // Persist to Supabase. Rating applies to the most recent job (astro
+            // takes precedence since stars live on the astro result panel).
+            const jobId = currentAstroJobId || currentJobId;
+            if (!jobId) return;
+            try {
+                await apiFetch(`${API}/api/job/${jobId}/rating`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ rating: r }),
+                });
+            } catch (e) { console.warn("[rating] save failed:", e?.message || e); }
         });
     });
 

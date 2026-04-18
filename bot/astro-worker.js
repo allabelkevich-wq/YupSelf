@@ -4,17 +4,19 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { generateImage, generateImageWithFace } from "./openrouter.js";
 import supabase from "./db.js";
+import { nominatimSchedule } from "./geocode.js";
 
 // Geocode — multi-strategy (Nominatim → Photon → hardcoded fallback)
 async function geocode(place) {
-  // Strategy 1: Nominatim
+  // Strategy 1: Nominatim (serialised via global 1 req/sec queue)
   try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1&accept-language=ru`;
-    const res = await fetch(url, { headers: { "User-Agent": "YupSelf-AstroGen/1.0 (alla@yupsoul.com)" } });
-    if (res.ok) {
-      const data = await res.json();
-      if (data[0]) return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
-    }
+    const data = await nominatimSchedule(async () => {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1&accept-language=ru`;
+      const res = await fetch(url, { headers: { "User-Agent": "YupSelf-AstroGen/1.0 (alla@yupsoul.com)" } });
+      if (!res.ok) return null;
+      return res.json();
+    });
+    if (data?.[0]) return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
   } catch {}
 
   // Strategy 2: Photon (Komoot)
