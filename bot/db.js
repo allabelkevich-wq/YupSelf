@@ -95,21 +95,57 @@ export async function spendTokens(telegramId, amount = 100, description = "Ге�
   return { ok: true, balance: data.balance };
 }
 
+/**
+ * Atomically add tokens via Postgres function (no read-modify-write race).
+ * Requires SQL migration: add_tokens_atomic(p_telegram_id bigint, p_amount int).
+ *
+ * Graceful fallback: if the RPC is missing (older DB), falls back to
+ * non-atomic SELECT+UPDATE and logs a warning. Remove fallback once
+ * the migration is applied in prod.
+ */
 export async function addTokens(telegramId, amount, type, description) {
-  const { data: user } = await supabase
-    .from("users")
-    .select("tokens_balance")
-    .eq("telegram_id", telegramId)
-    .single();
+  const { data, error } = await supabase.rpc("add_tokens_atomic", {
+    p_telegram_id: telegramId,
+    p_amount: amount,
+  });
 
-  if (!user) return;
+  if (error) {
+    const msg = (error.message || "").toLowerCase();
+    const rpcMissing = msg.includes("add_tokens_atomic") || msg.includes("function") || error.code === "PGRST202";
+    if (!rpcMissing) {
+      console.error("[addTokens] rpc error:", error.message);
+      throw new Error("Не удалось начислить Искры");
+    }
+    // Fallback (pre-migration): non-atomic — log warning.
+    console.warn("[addTokens] RPC missing, using non-atomic fallback");
+    const { data: user } = await supabase
+      .from("users")
+      .select("tokens_balance")
+      .eq("telegram_id", telegramId)
+      .single();
+    if (!user) return;
+    await supabase
+      .from("users")
+      .update({ tokens_balance: user.tokens_balance + amount, updated_at: new Date().toISOString() })
+      .eq("telegram_id", telegramId);
+    await logTokenTransaction(telegramId, amount, type, description);
+    return;
+  }
 
-  await supabase
-    .from("users")
-    .update({ tokens_balance: user.tokens_balance + amount, updated_at: new Date().toISOString() })
-    .eq("telegram_id", telegramId);
-
+  if (!data?.ok) {
+    console.warn("[addTokens] no user:", telegramId);
+    return;
+  }
   await logTokenTransaction(telegramId, amount, type, description);
+}
+
+/**
+ * Refund tokens after a failed generation.
+ * Uses addTokens (atomic via RPC) under the hood and tags the transaction
+ * type as "refund" so it can be audited separately from regular earnings.
+ */
+export async function refundTokens(telegramId, amount, description = "Возврат за ошибку") {
+  return addTokens(telegramId, amount, "refund", description);
 }
 
 async function logTokenTransaction(telegramId, amount, type, description) {

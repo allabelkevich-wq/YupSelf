@@ -90,39 +90,42 @@ export async function saveFace(telegramId, name, faceImageB64, description = "")
 }
 
 /**
- * Get all saved faces for a user.
+ * Get all saved faces for a user (excluding soft-deleted).
+ * Filter is tolerant to pre-migration rows where `status` column/value is missing.
  */
 export async function getSavedFaces(telegramId) {
   const { data } = await supabase
     .from("saved_faces")
-    .select("id, name, face_description, created_at")
+    .select("id, name, face_description, created_at, status")
     .eq("telegram_id", telegramId)
     .order("created_at", { ascending: false });
 
-  return data || [];
+  return (data || []).filter(f => f.status !== "deleted");
 }
 
 /**
- * Get face image by ID.
+ * Get face image by ID (excluding soft-deleted).
  */
 export async function getFaceImage(faceId, telegramId) {
   const { data } = await supabase
     .from("saved_faces")
-    .select("face_image_b64, name, face_description")
+    .select("face_image_b64, name, face_description, status")
     .eq("id", faceId)
     .eq("telegram_id", telegramId)
     .single();
 
+  if (!data || data.status === "deleted") return null;
   return data;
 }
 
 /**
- * Delete a saved face.
+ * Soft-delete a saved face (CLAUDE.md rule #4 — never hard-delete user data).
+ * Sets status = 'deleted' so the row remains auditable but hidden.
  */
 export async function deleteFace(faceId, telegramId) {
   await supabase
     .from("saved_faces")
-    .delete()
+    .update({ status: "deleted" })
     .eq("id", faceId)
     .eq("telegram_id", telegramId);
 }

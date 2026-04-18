@@ -930,24 +930,53 @@ window.addEventListener("unhandledrejection", function(e) {
         renderRefPreviews();
     });
 
-    // Compress image to max 1024x1024 JPEG (Gemini works best with this)
+    // Compress image to max 1024x1024 JPEG (Gemini works best with this).
+    // Returns the original file on error/timeout rather than hanging the UI.
     async function compressImage(file, maxSize = 1024) {
         return new Promise((resolve) => {
             const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement("canvas");
-                let w = img.width, h = img.height;
-                if (w > maxSize || h > maxSize) {
-                    const ratio = Math.min(maxSize / w, maxSize / h);
-                    w = Math.round(w * ratio);
-                    h = Math.round(h * ratio);
-                }
-                canvas.width = w;
-                canvas.height = h;
-                canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-                canvas.toBlob(blob => resolve(new File([blob], file.name, { type: "image/jpeg" })), "image/jpeg", 0.85);
+            const url = URL.createObjectURL(file);
+            let done = false;
+            const finish = (result) => {
+                if (done) return;
+                done = true;
+                try { URL.revokeObjectURL(url); } catch {}
+                resolve(result || file);
             };
-            img.src = URL.createObjectURL(file);
+            // Safety net: never hang longer than 15s on a broken image
+            const timer = setTimeout(() => {
+                console.warn("[compressImage] timeout, using original");
+                finish(null);
+            }, 15000);
+            img.onerror = () => {
+                clearTimeout(timer);
+                console.warn("[compressImage] load error, using original");
+                finish(null);
+            };
+            img.onload = () => {
+                clearTimeout(timer);
+                try {
+                    const canvas = document.createElement("canvas");
+                    let w = img.width, h = img.height;
+                    if (w > maxSize || h > maxSize) {
+                        const ratio = Math.min(maxSize / w, maxSize / h);
+                        w = Math.round(w * ratio);
+                        h = Math.round(h * ratio);
+                    }
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+                    canvas.toBlob(
+                        blob => finish(blob ? new File([blob], file.name, { type: "image/jpeg" }) : null),
+                        "image/jpeg",
+                        0.85,
+                    );
+                } catch (e) {
+                    console.warn("[compressImage] canvas error:", e?.message || e);
+                    finish(null);
+                }
+            };
+            img.src = url;
         });
     }
 
@@ -987,7 +1016,7 @@ window.addEventListener("unhandledrejection", function(e) {
         for (let i = 0; i < max; i++) {
             await new Promise(r => setTimeout(r, 3000));
             try {
-                const res = await fetch(`${API}/api/job/${jobId}`);
+                const res = await apiFetch(`${API}/api/job/${jobId}`);
                 if (!res.ok) {
                     failures++;
                     plog("#" + i + " HTTP " + res.status + " fail:" + failures);
@@ -1056,7 +1085,7 @@ window.addEventListener("unhandledrejection", function(e) {
                 for (let attempt = 0; attempt < 3 && !editJobId; attempt++) {
                     if (attempt > 0) { console.log("[edit] retry", attempt + 1); await new Promise(r => setTimeout(r, 2000)); }
                     try {
-                        const editRes = await fetch(`${API}/api/edit`, { method: "POST", body: form });
+                        const editRes = await apiFetch(`${API}/api/edit`, { method: "POST", body: form });
                         if (editRes.status === 402) throw new Error("Искры закончились. Пополни баланс в Кабинете.");
                         if (!editRes.ok) { console.warn("[edit] HTTP", editRes.status); continue; }
                         const editData = await editRes.json();
@@ -1078,7 +1107,7 @@ window.addEventListener("unhandledrejection", function(e) {
                 let jobId = null;
                 for (let attempt = 0; attempt < 3; attempt++) {
                     try {
-                        const startRes = await fetch(`${API}/api/generate`, {
+                        const startRes = await apiFetch(`${API}/api/generate`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: genPayload,
@@ -1375,11 +1404,10 @@ window.addEventListener("unhandledrejection", function(e) {
         // Auth
         if (!cabUser) {
             try {
-                const res = await fetch(`${API}/api/auth`, {
+                const res = await apiFetch(`${API}/api/auth`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        telegramId: tgUser.id,
                         username: tgUser.username,
                         firstName: tgUser.first_name,
                     }),
@@ -1804,7 +1832,7 @@ window.addEventListener("unhandledrejection", function(e) {
                 if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
                 try {
                     dlog("attempt " + (attempt+1) + " POST...");
-                    const res = await fetch(`${API}/api/astro/generate`, {
+                    const res = await apiFetch(`${API}/api/astro/generate`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: payload,
