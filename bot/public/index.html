@@ -316,6 +316,23 @@
         .ref-zone.has-files .ref-clear { display: inline; }
         input[type="file"] { display: none; }
 
+        /* ── Astro preset chips ───────────────────────────── */
+        .astro-preset {
+            flex: 1 1 auto; min-width: 0;
+            padding: 10px 12px; border-radius: 9999px;
+            background: rgba(124, 58, 237, 0.08);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            color: var(--text-primary);
+            font-family: 'Manrope', sans-serif;
+            font-size: 12px; font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s ease, background 0.15s ease;
+            white-space: nowrap;
+        }
+        .astro-preset:hover { background: rgba(124, 58, 237, 0.18); }
+        .astro-preset:active { transform: scale(0.97); }
+        .astro-preset.selected { background: linear-gradient(135deg, var(--accent-1), var(--accent-2)); color: white; border-color: transparent; }
+
         /* ── Bottom Navigation ─────────────────────────────── */
         .bottom-nav {
             position: fixed; bottom: 0; left: 0; right: 0;
@@ -635,6 +652,7 @@
                 <div class="cab-balance-label">Искр</div>
                 <div style="font-size:12px; color:var(--text-secondary); margin-top:6px;" id="cabIskryInfo">= <span id="cabGensLeft">0</span> генераций</div>
                 <button class="cab-topup" id="cabTopup">Пополнить в DARAI</button>
+                <button class="cab-topup" id="cabTopupStars" style="margin-top:8px; background:linear-gradient(135deg, #ffd86b, #f59e0b); color:#1a1a2e;">Пополнить через Telegram Stars ⭐</button>
             </div>
 
             <div class="cab-stats">
@@ -730,6 +748,14 @@
             </select>
 
             <input type="text" id="astroIntention" placeholder="Намерение (опционально): Покажи мой внутренний мир" style="width:100%; padding:12px; border-radius:12px; background:rgba(0,0,0,0.25); border:1px solid var(--border); color:var(--text-primary); font-family:'Manrope',sans-serif; font-size:14px; outline:none;">
+
+            <!-- Presets: three ready-made intentions to reduce cold-start friction -->
+            <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-top:4px;">Готовые настроения</div>
+            <div id="astroPresets" style="display:flex; flex-wrap:wrap; gap:6px;">
+                <button type="button" class="astro-preset" data-preset="Покажи меня как королевскую особу — сила, уверенность, благородство, роскошь, глубокие тёмные цвета, золото">👑 Королевская стать</button>
+                <button type="button" class="astro-preset" data-preset="Образ природной стихии — моя связь с землёй, водой и небом, естественный свет, живая палитра, натуральные фактуры">🌿 Природная стихия</button>
+                <button type="button" class="astro-preset" data-preset="Мистический портрет — интуиция, магия, звёздная пыль, лунное освещение, глубокие сине-фиолетовые тона, таинственность">🌙 Мистический портрет</button>
+            </div>
         </div><!-- /astroFormFields -->
 
         <button class="gen-btn" id="astroGenBtn" style="margin-top:16px;">Создать портрет по звёздам</button>
@@ -739,7 +765,7 @@
         <!-- Astro loading -->
         <div class="loading-wrap" id="astroLoading">
             <div class="loading-orb"></div>
-            <div class="loading-text" id="astroLoadingText">Рассчитываю натальную карту...</div>
+            <div class="loading-text" id="astroLoadingText">Рассчитываю твой персональный расклад...</div>
         </div>
 
         <!-- Astro result -->
@@ -842,7 +868,13 @@
         </button>
     </nav>
 
-    <footer>YupSelf &middot; <a href="https://t.me/YupSelf_bot">@YupSelf_bot</a> &middot; 2026</footer>
+    <footer>
+        YupSelf &middot; <a href="https://t.me/YupSelf_bot">@YupSelf_bot</a> &middot; 2026
+        <br>
+        <a href="/terms.html" style="color:var(--text-secondary); font-size:11px; text-decoration:underline;">Соглашение</a>
+        &middot;
+        <a href="/privacy.html" style="color:var(--text-secondary); font-size:11px; text-decoration:underline;">Конфиденциальность</a>
+    </footer>
 </div>
 
 <script>
@@ -1533,39 +1565,92 @@ window.addEventListener("unhandledrejection", function(e) {
         $("#payStep2").style.display = "none";
     };
 
+    // Render a package list into #payPackages and return the modal ready to show.
+    function renderPackages(packages, onClick) {
+        const box = $("#payPackages");
+        box.textContent = "";
+        for (const pkg of packages) {
+            const div = document.createElement("div");
+            div.style.cssText = "padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:14px; margin-bottom:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:12px;";
+            const labelEl = document.createElement("div");
+            labelEl.style.cssText = "font-size:14px; font-weight:700; color:var(--text-primary);";
+            labelEl.textContent = pkg.label || "";
+            div.appendChild(labelEl);
+            if (pkg.discount && pkg.discount > 0) {
+                const badge = document.createElement("div");
+                badge.style.cssText = "flex-shrink:0; padding:4px 10px; border-radius:9999px; background:linear-gradient(135deg, var(--accent-1), var(--accent-2)); color:white; font-size:11px; font-weight:800;";
+                badge.textContent = "−" + pkg.discount + "%";
+                div.appendChild(badge);
+            }
+            div.addEventListener("click", () => onClick(pkg.id));
+            box.appendChild(div);
+        }
+    }
+
     $("#cabTopup").addEventListener("click", async () => {
         const tgUser = tg?.initDataUnsafe?.user;
         if (!tgUser) { alert("Войди через Telegram"); return; }
-
-        // Load YupPay packages
         try {
             const res = await apiFetch(`${API}/api/yuppay/packages`);
             const { packages } = await res.json();
-
-            const box = $("#payPackages");
-            box.textContent = "";
-            for (const pkg of packages) {
-                const div = document.createElement("div");
-                div.style.cssText = "padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:14px; margin-bottom:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:12px;";
-                const labelEl = document.createElement("div");
-                labelEl.style.cssText = "font-size:14px; font-weight:700; color:var(--text-primary);";
-                labelEl.textContent = pkg.label || "";
-                div.appendChild(labelEl);
-                if (pkg.discount && pkg.discount > 0) {
-                    const badge = document.createElement("div");
-                    badge.style.cssText = "flex-shrink:0; padding:4px 10px; border-radius:9999px; background:linear-gradient(135deg, var(--accent-1), var(--accent-2)); color:white; font-size:11px; font-weight:800;";
-                    badge.textContent = "−" + pkg.discount + "%";
-                    div.appendChild(badge);
-                }
-                div.addEventListener("click", () => startYupPay(pkg.id));
-                box.appendChild(div);
-            }
-
+            // Update modal title for DARAI mode
+            const h = $("#payStep1").querySelector("div[style*='text-align:center']");
+            if (h) h.textContent = "Пополнить токены за DARAI";
+            renderPackages(packages, (id) => startYupPay(id));
             $("#payModal").style.display = "flex";
         } catch (err) {
             alert("Не удалось загрузить пакеты");
         }
     });
+
+    // ── Telegram Stars top-up (secondary channel) ──────────────────
+    $("#cabTopupStars").addEventListener("click", async () => {
+        const tgUser = tg?.initDataUnsafe?.user;
+        if (!tgUser) { alert("Войди через Telegram"); return; }
+        if (!tg?.openInvoice) {
+            alert("Telegram Stars доступны только внутри Telegram");
+            return;
+        }
+        try {
+            const res = await apiFetch(`${API}/api/stars/packages`);
+            const { packages } = await res.json();
+            const h = $("#payStep1").querySelector("div[style*='text-align:center']");
+            if (h) h.textContent = "Пополнить через Telegram Stars ⭐";
+            renderPackages(packages, (id) => startStarsPayment(id));
+            $("#payModal").style.display = "flex";
+        } catch (err) {
+            alert("Не удалось загрузить пакеты Stars");
+        }
+    });
+
+    async function startStarsPayment(packageId) {
+        try {
+            const res = await apiFetch(`${API}/api/stars/create`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ packageId }),
+            });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const { payUrl } = await res.json();
+            if (!payUrl) throw new Error("No pay link");
+            $("#payModal").style.display = "none";
+            tg.openInvoice(payUrl, (status) => {
+                // status: "paid" | "cancelled" | "failed" | "pending"
+                if (status === "paid") {
+                    // Refresh balance — the bot credits Искры from successful_payment
+                    // handler within a second or two; we poll once to reflect it.
+                    setTimeout(loadBalance, 1500);
+                    setTimeout(loadCabinet, 2000);
+                    alert("Оплата прошла — Искры уже на балансе ✨");
+                } else if (status === "failed") {
+                    alert("Оплата не прошла. Попробуй ещё раз.");
+                }
+            });
+        } catch (err) {
+            console.error("[stars]", err);
+            alert("Не удалось создать счёт Stars");
+        }
+    }
 
     async function startYupPay(packageId) {
         try {
@@ -1746,6 +1831,20 @@ window.addEventListener("unhandledrejection", function(e) {
             $("#astroPlaceSuggestions").style.display = "none";
     });
 
+    // Astro intention presets — one click fills the field + visually marks the chip
+    $$(".astro-preset").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const preset = btn.dataset.preset || "";
+            $("#astroIntention").value = preset;
+            $$(".astro-preset").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+        });
+    });
+    // Clear "selected" if the user manually edits the field
+    $("#astroIntention").addEventListener("input", () => {
+        $$(".astro-preset").forEach(b => b.classList.remove("selected"));
+    });
+
     // Astro face photo
     let astroFaceFile = null;
     $("#astroFaceZone").addEventListener("click", () => $("#astroFaceInput").click());
@@ -1780,7 +1879,7 @@ window.addEventListener("unhandledrejection", function(e) {
         btn.textContent = "Рассчитываю...";
         $("#astroResult").classList.remove("visible");
         $("#astroLoading").classList.add("visible");
-        $("#astroLoadingText").textContent = "Рассчитываю натальную карту...";
+        $("#astroLoadingText").textContent = "Рассчитываю твой персональный расклад...";
 
         // Compress face photo to base64 if uploaded
         let faceBase64 = null;

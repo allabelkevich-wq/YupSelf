@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax:
+    name: Syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: node --check all server JS
+        # Each file is validated independently so one broken file doesn't mask others.
+        run: |
+          set -e
+          for f in bot/*.js; do
+            echo "--- $f"
+            node --check "$f"
+          done
+      - name: Verify critical env contracts
+        run: |
+          # render.yaml must list every env the server reads — catches drift.
+          node -e "
+            const fs = require('fs');
+            const rendered = fs.readFileSync('render.yaml', 'utf8');
+            const envsInCode = new Set();
+            for (const f of fs.readdirSync('bot')) {
+              if (!f.endsWith('.js')) continue;
+              const src = fs.readFileSync('bot/' + f, 'utf8');
+              for (const m of src.matchAll(/process\.env\.([A-Z_][A-Z0-9_]+)/g)) envsInCode.add(m[1]);
+            }
+            const optional = new Set(['NODE_ENV','SENTRY_DSN','SENTRY_ENVIRONMENT','SENTRY_RELEASE','RENDER_GIT_COMMIT','TELEGRAM_STARS_ENABLED']);
+            const missing = [...envsInCode].filter(e => !rendered.includes('key: ' + e) && !optional.has(e));
+            if (missing.length) {
+              console.error('Env vars used in code but missing from render.yaml:', missing);
+              process.exit(1);
+            }
+            console.log('render.yaml covers all', envsInCode.size, 'env vars referenced in code');
+          "
+      - name: No HTML test pages in public/
+        run: |
+          # Guard against re-introducing debug/test pages.
+          if ls bot/public/test*.html bot/public/debug*.html 2>/dev/null; then
+            echo "Debug/test HTML found in bot/public — remove before merge"
+            exit 1
+          fi
+          echo "public/ clean"
+
+  rules:
+    name: CLAUDE.md absolute rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Project name spelling (must be YupSelf)
+        run: |
+          # CLAUDE.md lists the WRONG spellings as a spec of what to avoid —
+          # exclude it from the check.
+          hits=$(grep -Rn --include='*.js' --include='*.html' --include='*.md' -E 'YuPself|YuPSelf|Yupself|Yup self' . \
+                 | grep -v node_modules | grep -v package-lock.json | grep -v CLAUDE.md || true)
+          if [ -n "$hits" ]; then
+            echo "Wrong project name spelling (rule #1):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "Project name spelled consistently"
+      - name: "'натальная карта' forbidden in UI text"
+        run: |
+          # Rule #2: "натальная карта" is allowed ONLY in system prompts
+          # (bot/astro-worker.js, bot/prompts/*). Flag hits elsewhere.
+          hits=$(grep -Rn --include='*.html' --include='*.js' -i 'натальн' bot/public/ 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "'натальн*' leaked into user-facing text (rule #2):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "UI clean of natal-chart terminology"
+      - name: No hard-delete on user data tables
+        run: |
+          # Rule #4: only UPDATE ... SET status='deleted' on users/generations/saved_faces.
+          if grep -RnE '\.from\("(users|generations|saved_faces)"\)\s*\n?\s*\.delete\(' bot/ 2>/dev/null; then
+            echo "Hard-delete found on user data table (rule #4)"; exit 1
+          fi
+          echo "Soft-delete discipline intact"

@@ -1,4 +1,6 @@
 import "dotenv/config";
+// Sentry MUST be imported before grammy/express so it can instrument async stacks.
+import { captureException as sentryCapture, captureMessage as sentryMessage } from "./sentry.js";
 import { Bot, InputFile, InlineKeyboard, session } from "grammy";
 import express from "express";
 import { enhancePrompt, translatePrompt, generateImage, editImage } from "./openrouter.js";
@@ -9,6 +11,8 @@ import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayV
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
 import { nominatimSchedule } from "./geocode.js";
+import { getStarsPackages, createStarsInvoice, parseStarsPayload } from "./telegram-stars.js";
+import { applyWatermark } from "./watermark.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -391,6 +395,97 @@ bot.on(["message:voice", "message:audio"], async (ctx) => {
   } catch (err) {
     console.error("[voice]", err.message);
     await ctx.reply("Ошибка расшифровки. Попробуй отправить текстом.");
+  }
+});
+
+// ── Telegram Stars payments ─────────────────────────────────────────
+// Step 1: approve the pre-checkout query. Telegram gives us ~10s — NEVER
+// reject unless we can prove the invoice is bogus. We validate our own
+// payload, then approve or reject with a user-friendly message.
+bot.on("pre_checkout_query", async (ctx) => {
+  try {
+    const pcq = ctx.preCheckoutQuery;
+    const parsed = parseStarsPayload(pcq.invoice_payload);
+    if (!parsed) {
+      await ctx.answerPreCheckoutQuery(false, "Некорректный счёт. Создай новый в YupSelf.");
+      return;
+    }
+    // Defence against tampering: the from_id must match the payload's telegramId.
+    if (Number(pcq.from.id) !== parsed.telegramId) {
+      await ctx.answerPreCheckoutQuery(false, "Счёт выставлен не на твой аккаунт.");
+      return;
+    }
+    await ctx.answerPreCheckoutQuery(true);
+  } catch (err) {
+    console.error("[stars/pre_checkout]", err.message);
+    sentryCapture(err, { tag: "stars/pre_checkout" });
+    try { await ctx.answerPreCheckoutQuery(false, "Временная ошибка. Попробуй ещё раз."); } catch {}
+  }
+});
+
+// Step 2: successful_payment — credit Искры exactly once.
+// Telegram sends us telegram_payment_charge_id (globally unique). We use
+// it as the primary key of processed_stars_invoices so duplicate webhooks
+// fail insert and we skip re-crediting.
+bot.on("message:successful_payment", async (ctx) => {
+  try {
+    const sp = ctx.message.successful_payment;
+    const parsed = parseStarsPayload(sp.invoice_payload);
+    const fromId = Number(ctx.from?.id || 0);
+    if (!parsed || !fromId) {
+      console.warn("[stars/paid] malformed payload, payload=%s from=%s", sp.invoice_payload, fromId);
+      sentryMessage("stars malformed payload", { tag: "stars/paid", extras: { fromId, chargeId: sp.telegram_payment_charge_id } });
+      return;
+    }
+    if (parsed.telegramId !== fromId) {
+      console.warn(`[stars/paid] telegramId mismatch: payload=${parsed.telegramId} from=${fromId}`);
+      return;
+    }
+
+    // Idempotency: INSERT …  — duplicate charge_id collapses to a no-op.
+    const { error: dupErr } = await supabase.from("processed_stars_invoices").insert({
+      charge_id: sp.telegram_payment_charge_id,
+      telegram_id: fromId,
+      tokens: parsed.tokens,
+      package_id: parsed.packageId,
+      stars: sp.total_amount,
+      invoice_payload: sp.invoice_payload,
+    });
+    if (dupErr) {
+      // 23505 = unique_violation → already credited. Anything else = real problem.
+      const code = dupErr.code || "";
+      const msg = (dupErr.message || "").toLowerCase();
+      const tableMissing = code === "42P01" || msg.includes("processed_stars_invoices");
+      if (code === "23505") {
+        console.log(`[stars/paid] duplicate charge ${sp.telegram_payment_charge_id} — already credited`);
+        return;
+      }
+      if (tableMissing) {
+        console.warn("[stars/paid] processed_stars_invoices missing — run migration; proceeding without dup-protection");
+        sentryMessage("processed_stars_invoices table missing", { tag: "stars/paid" });
+      } else {
+        console.error("[stars/paid] idempotency insert failed:", dupErr.message);
+        sentryCapture(new Error(dupErr.message), { tag: "stars/paid", userId: fromId });
+        // Fail loudly — better than double-crediting later.
+        await ctx.reply("✨ Оплата получена, но зачисление задержалось — мы начислим вручную в течение часа.");
+        return;
+      }
+    }
+
+    // Credit Искры (atomic via RPC → see db.js addTokens)
+    await addTokens(fromId, parsed.tokens, "telegram_stars", `Пополнение через Telegram Stars (${parsed.packageId})`);
+    console.log(`[stars/paid] credited ${parsed.tokens} Искр to ${fromId} (charge ${sp.telegram_payment_charge_id})`);
+
+    // Notify user + admins
+    try {
+      await ctx.reply(`✨ Оплата прошла! На баланс зачислено ${parsed.tokens} Искр.`);
+    } catch {}
+    await notifyAdmins(
+      `<b>Telegram Stars оплата</b>\nUser: ${escHtml(fromId)}\nПакет: ${escHtml(parsed.packageId)}\nИскры: +${escHtml(parsed.tokens)}\nStars: ${escHtml(sp.total_amount)} ⭐`
+    );
+  } catch (err) {
+    console.error("[stars/paid]", err.message);
+    sentryCapture(err, { tag: "stars/paid", userId: ctx.from?.id });
   }
 });
 
@@ -786,6 +881,7 @@ app.post("/api/webhooks/yuppay",
       res.json({ ok: true });
     } catch (err) {
       console.error("[yuppay/webhook] error:", err.message);
+      sentryCapture(err, { tag: "yuppay/webhook" });
       res.status(500).json({ error: "Webhook processing failed" });
     }
   }
@@ -1101,6 +1197,7 @@ app.post("/api/generate", requireTelegramAuth, genRateLimit, async (req, res) =>
     res.json({ jobId });
   } catch (err) {
     console.error("[generate]", err.message);
+    sentryCapture(err, { tag: "generate", userId: req.tgUser?.id });
     res.status(500).json({ error: "Не удалось запустить генерацию" });
   }
 });
@@ -1192,21 +1289,40 @@ app.get("/api/download/:id", async (req, res) => {
   // injection or path traversal in older job IDs).
   const safeId = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
 
-  // If base64 in cache — serve directly
+  // If base64 in cache — watermark and serve directly
   if (job.imageBase64) {
-    const buf = Buffer.from(job.imageBase64, "base64");
+    const raw = Buffer.from(job.imageBase64, "base64");
+    const buf = await applyWatermark(raw);
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Content-Disposition", `attachment; filename="yupself-${safeId || "image"}.png"`);
     return res.send(buf);
   }
 
-  // If image_url (from Supabase Storage) — redirect, but only to a trusted host
+  // If image_url (from Supabase Storage) — fetch, watermark, serve.
+  // Redirect is a deliberate non-option here: a raw Supabase URL bypasses
+  // our branding and also exposes the storage path. Streaming through us
+  // costs ~1 roundtrip but buys free virality (watermark) + privacy.
   if (job.imageUrl) {
     if (!isSafeImageUrl(job.imageUrl)) {
-      console.warn(`[download] refused redirect to untrusted URL: ${job.imageUrl.slice(0, 100)}`);
+      console.warn(`[download] refused untrusted URL: ${job.imageUrl.slice(0, 100)}`);
       return res.status(404).send("Not found");
     }
-    return res.redirect(job.imageUrl);
+    try {
+      const upstream = await fetch(job.imageUrl);
+      if (!upstream.ok) {
+        // Fall back to redirect — original URL may still work for the client
+        return res.redirect(job.imageUrl);
+      }
+      const ab = await upstream.arrayBuffer();
+      const raw = Buffer.from(ab);
+      const buf = await applyWatermark(raw);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Content-Disposition", `attachment; filename="yupself-${safeId || "image"}.png"`);
+      return res.send(buf);
+    } catch (err) {
+      console.error("[download] watermark fetch failed:", err.message);
+      return res.redirect(job.imageUrl);
+    }
   }
 
   res.status(404).send("Not found");
@@ -1370,7 +1486,30 @@ app.post("/api/yuppay/create", invoiceRateLimit, requireTelegramAuth, async (req
     res.json(invoice);
   } catch (err) {
     console.error("[yuppay/create]", err.message);
+    sentryCapture(err, { tag: "yuppay/create", userId: req.tgUser?.id });
     res.status(500).json({ error: "Не удалось создать счёт" });
+  }
+});
+
+// ── Telegram Stars (secondary payment channel) ──────────────────────
+// DARAI is the flagship — Stars exists for users without a NEAR wallet.
+app.get("/api/stars/packages", (_req, res) => {
+  res.json({ packages: getStarsPackages() });
+});
+
+app.post("/api/stars/create", invoiceRateLimit, requireTelegramAuth, async (req, res) => {
+  try {
+    const { packageId } = req.body;
+    if (!packageId) return res.status(400).json({ error: "packageId required" });
+    const invoice = await createStarsInvoice(bot, {
+      packageId,
+      telegramId: req.tgUser.id,
+    });
+    res.json(invoice);
+  } catch (err) {
+    console.error("[stars/create]", err.message);
+    sentryCapture(err, { tag: "stars/create", userId: req.tgUser?.id });
+    res.status(500).json({ error: "Не удалось создать счёт в Stars" });
   }
 });
 
@@ -1466,6 +1605,7 @@ app.post("/api/astro/generate", requireTelegramAuth, genRateLimit, async (req, r
     res.json({ jobId });
   } catch (err) {
     console.error("[astro/generate]", err.message);
+    sentryCapture(err, { tag: "astro/generate", userId: req.tgUser?.id });
     res.status(500).json({ error: "Не удалось запустить генерацию" });
   }
 });
@@ -1579,6 +1719,7 @@ app.post("/api/edit", requireTelegramAuth, genRateLimit, upload.array("images", 
     res.json({ jobId });
   } catch (err) {
     console.error("[api/edit]", err.message);
+    sentryCapture(err, { tag: "edit", userId: req.tgUser?.id });
     res.status(500).json({ error: "Не удалось запустить редактирование" });
   }
 });
@@ -1665,12 +1806,14 @@ function setupGracefulShutdown(server) {
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
-  // Catch unhandled rejections to prevent crashes
+  // Catch unhandled rejections to prevent crashes + forward to Sentry
   process.on("unhandledRejection", (reason) => {
     console.error("[unhandledRejection]", reason);
+    sentryCapture(reason instanceof Error ? reason : new Error(String(reason)), { tag: "unhandledRejection" });
   });
   process.on("uncaughtException", (err) => {
     console.error("[uncaughtException]", err);
+    sentryCapture(err, { tag: "uncaughtException" });
   });
 }
 

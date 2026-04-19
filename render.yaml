@@ -36,15 +36,26 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
-      # Geocoding (optional — waterfalls to Nominatim/Photon without it)
+      # Geocoding (optional — waterfalls to Nominatim/Photon without it).
+      # Either of these keys works; GOOGLE_GEOCODING_API_KEY is preferred.
       - key: GOOGLE_GEOCODING_API_KEY
         sync: false
-      # YupPay merchant (DARAI payments)
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      # YupPay merchant (DARAI payments — flagship)
       - key: YUPPAY_API_KEY
         sync: false
       - key: YUPPAY_WEBHOOK_SECRET
         sync: false
       - key: DARAI_PER_ISKRA
+        sync: false
+      - key: DARAI_MERCHANT_ACCOUNT
+        sync: false
+      # Telegram Stars (secondary payment channel)
+      - key: STARS_PER_ISKRA
+        sync: false
+      # Observability
+      - key: SENTRY_DSN
         sync: false
       # Optional: CORS allow-list extras (comma-separated)
       - key: CORS_ALLOWED_ORIGINS
