@@ -20,36 +20,51 @@ export async function getOrCreateUser(telegramId, { username, firstName, avatarU
 
   if (existing) return existing;
 
-  // Create new user
+  // Race-safe creation: two parallel /api/auth calls from the same user
+  // could both miss the SELECT above. INSERT ... ON CONFLICT lets Postgres
+  // arbitrate — loser reads the winner's row instead of throwing 23505.
   const refCode = telegramId.toString(36) + Date.now().toString(36).slice(-4);
-  const { data: newUser, error } = await supabase
+  const resolvedReferrer = referralCode ? await resolveReferral(referralCode) : null;
+  const { data: inserted, error } = await supabase
     .from("users")
-    .insert({
-      telegram_id: telegramId,
-      username: username || null,
-      first_name: firstName || null,
-      avatar_url: avatarUrl || null,
-      referral_code: refCode,
-      referred_by: referralCode ? await resolveReferral(referralCode) : null,
-      tokens_balance: 300, // 300 tokens = 3 free generations (100 per gen)
-    })
+    .upsert(
+      {
+        telegram_id: telegramId,
+        username: username || null,
+        first_name: firstName || null,
+        avatar_url: avatarUrl || null,
+        referral_code: refCode,
+        referred_by: resolvedReferrer,
+        tokens_balance: 300, // 300 tokens = 3 free generations (100 per gen)
+      },
+      { onConflict: "telegram_id", ignoreDuplicates: true },
+    )
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
-  // Log welcome tokens
-  await logTokenTransaction(telegramId, 300, "welcome", "Приветственные токены");
+  // If our insert lost the race, fetch the winner's row and return it
+  // without duplicating the welcome bonus.
+  if (!inserted) {
+    const { data: winner } = await supabase
+      .from("users")
+      .select("*")
+      .eq("telegram_id", telegramId)
+      .single();
+    return winner;
+  }
 
-  // Referral bonus: both get 100 tokens
-  if (newUser.referred_by) {
+  // We won the race — grant welcome + referral bonuses exactly once.
+  await logTokenTransaction(telegramId, 300, "welcome", "Приветственные токены");
+  if (inserted.referred_by) {
     try {
-      await addTokens(newUser.referred_by, 100, "referral", `Реферал: ${firstName || username || telegramId}`);
+      await addTokens(inserted.referred_by, 100, "referral", `Реферал: ${firstName || username || telegramId}`);
       await addTokens(telegramId, 100, "referral_bonus", "Бонус за приглашение");
     } catch (e) { console.error("[referral bonus]", e.message); }
   }
 
-  return newUser;
+  return inserted;
 }
 
 async function resolveReferral(code) {

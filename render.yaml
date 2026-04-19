@@ -6,12 +6,46 @@ services:
     buildCommand: npm install
     startCommand: node bot/index.js
     healthCheckPath: /healthz
+    # `sync: false` means Render will NOT copy the value from this file —
+    # the admin must set it once in the dashboard. This file is the
+    # contract of WHICH env vars are required.
     envVars:
+      # Core
       - key: BOT_TOKEN
-        sync: false
-      - key: OPENROUTER_API_KEY
         sync: false
       - key: WEBHOOK_URL
         sync: false
       - key: PORT
         value: 3000
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      # Supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      # AI providers (image generation)
+      - key: LAOZHANG_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GOOGLE_AI_KEY
+        sync: false
+      # AI providers (prompts & voice)
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Geocoding (optional — waterfalls to Nominatim/Photon without it)
+      - key: GOOGLE_GEOCODING_API_KEY
+        sync: false
+      # YupPay merchant (DARAI payments)
+      - key: YUPPAY_API_KEY
+        sync: false
+      - key: YUPPAY_WEBHOOK_SECRET
+        sync: false
+      - key: DARAI_PER_ISKRA
+        sync: false
+      # Optional: CORS allow-list extras (comma-separated)
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

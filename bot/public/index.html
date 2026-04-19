@@ -1365,7 +1365,7 @@ window.addEventListener("unhandledrejection", function(e) {
                 form.append("audio", blob, `voice.${ext}`);
                 $("#prompt").value = "Распознаю...";
                 try {
-                    const res = await fetch(`${API}/api/transcribe`, { method: "POST", body: form });
+                    const res = await apiFetch(`${API}/api/transcribe`, { method: "POST", body: form });
                     const data = await res.json();
                     $("#prompt").value = data.text || "";
                 } catch { $("#prompt").value = ""; }

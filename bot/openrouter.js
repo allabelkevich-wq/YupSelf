@@ -271,7 +271,9 @@ export async function generateImageWithFace(prompt, faceBase64, imageConfig = {}
  * Uses inline_data format (Gemini native, most reliable).
  */
 async function _callGoogleAI(model, prompt, imageBase64) {
-  const url = `${GOOGLE_AI_URL}/${model}:generateContent?key=${GOOGLE_AI_KEY}`;
+  // Pass the API key via header, not query string, so it can't leak into
+  // access logs, referer, proxy traces, or error messages that include the URL.
+  const url = `${GOOGLE_AI_URL}/${model}:generateContent`;
 
   const body = {
     contents: [{
@@ -296,7 +298,10 @@ async function _callGoogleAI(model, prompt, imageBase64) {
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": GOOGLE_AI_KEY,
+    },
     body: JSON.stringify(body),
     signal: controller.signal,
   });
@@ -307,7 +312,7 @@ async function _callGoogleAI(model, prompt, imageBase64) {
     throw new Error(`Google AI ${res.status}: ${err.slice(0, 300)}`);
   }
 
-  const data = await res.json();
+  const data = await readJsonCapped(res);
 
   // Extract image from Google AI response
   const parts = data.candidates?.[0]?.content?.parts;
@@ -425,6 +430,36 @@ export async function editImage(prompt, imageBase64List, imageConfig = {}) {
 }
 
 /**
+ * Stream a fetch response into memory while enforcing a maximum size.
+ * Defends against OOM from a misbehaving upstream that claims to return
+ * gigabytes of data. Throws if body exceeds maxBytes.
+ */
+const MAX_IMAGE_RESPONSE_BYTES = 50 * 1024 * 1024; // 50MB — way above any legit image payload
+async function readJsonCapped(res, maxBytes = MAX_IMAGE_RESPONSE_BYTES) {
+  const claimed = Number(res.headers.get("content-length") || 0);
+  if (claimed && claimed > maxBytes) {
+    try { await res.body?.cancel?.(); } catch {}
+    throw new Error(`Response too large (${claimed} > ${maxBytes})`);
+  }
+  if (!res.body) return res.json();
+  const reader = res.body.getReader();
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      try { await reader.cancel(); } catch {}
+      throw new Error(`Response too large (> ${maxBytes} bytes)`);
+    }
+    chunks.push(value);
+  }
+  const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+  return JSON.parse(buf.toString("utf8"));
+}
+
+/**
  * Internal: call an OpenAI-compatible image API and extract result.
  */
 async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
@@ -457,10 +492,10 @@ async function _callImageApi(apiUrl, apiKey, model, prompt, imageConfig = {}) {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`API error ${res.status}: ${err}`);
+    throw new Error(`API error ${res.status}: ${err.slice(0, 500)}`);
   }
 
-  const data = await res.json();
+  const data = await readJsonCapped(res);
   return _extractImage(data);
 }
 

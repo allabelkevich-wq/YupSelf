@@ -71,9 +71,40 @@ export async function saveSessionImage(sessionId, imageBase64) {
 }
 
 /**
- * Save a face for reuse across sessions.
+ * Max active faces per user — caps storage usage from abusive bulk-saving.
+ * Active = status != 'deleted'. With 1.5MB per face (compressed on client),
+ * 50 × ~2MB base64 ≈ 100MB worst case per user.
+ */
+const MAX_FACES_PER_USER = 50;
+
+/**
+ * Save a face for reuse across sessions. Caps at MAX_FACES_PER_USER active.
  */
 export async function saveFace(telegramId, name, faceImageB64, description = "") {
+  // Count existing active faces (status != 'deleted')
+  const { count, error: countErr } = await supabase
+    .from("saved_faces")
+    .select("id", { count: "exact", head: true })
+    .eq("telegram_id", telegramId)
+    .neq("status", "deleted");
+
+  if (countErr) {
+    // Column may not exist pre-migration — fall back to a bounded count without the filter
+    const { count: countFallback } = await supabase
+      .from("saved_faces")
+      .select("id", { count: "exact", head: true })
+      .eq("telegram_id", telegramId);
+    if ((countFallback || 0) >= MAX_FACES_PER_USER) {
+      const err = new Error(`Достигнут лимит: ${MAX_FACES_PER_USER} лиц`);
+      err.code = "FACE_LIMIT";
+      throw err;
+    }
+  } else if ((count || 0) >= MAX_FACES_PER_USER) {
+    const err = new Error(`Достигнут лимит: ${MAX_FACES_PER_USER} лиц`);
+    err.code = "FACE_LIMIT";
+    throw err;
+  }
+
   const { data, error } = await supabase
     .from("saved_faces")
     .insert({

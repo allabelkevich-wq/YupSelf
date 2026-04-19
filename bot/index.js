@@ -38,6 +38,14 @@ async function notifyAdmins(text) {
   }
 }
 
+/** Escape untrusted text before interpolating into HTML parse_mode messages. */
+function escHtml(v) {
+  return String(v == null ? "—" : v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 // ── Session ─────────────────────────────────────────────────────────
 bot.use(
   session({
@@ -769,11 +777,10 @@ app.post("/api/webhooks/yuppay",
         console.warn("[yuppay/webhook] user notify failed:", e.message);
       }
 
-      // Notify admins about payment (with rate for cost tracking)
-      const paidDarai = metadata.darai_amount || "—";
-      const paidRate = metadata.darai_per_iskra || "—";
+      // Notify admins about payment (escape user-controlled fields to
+      // prevent HTML injection when parse_mode=HTML is used).
       await notifyAdmins(
-        `<b>YupPay оплата</b>\nUser: ${telegramId}\nПакет: ${packageId || "—"}\nИскры: +${tokens}\nDarai: ${paidDarai}\nКурс: ${paidRate} DARAI/Искра`
+        `<b>YupPay оплата</b>\nUser: ${escHtml(telegramId)}\nПакет: ${escHtml(packageId)}\nИскры: +${escHtml(tokens)}\nDarai: ${escHtml(metadata.darai_amount)}\nКурс: ${escHtml(metadata.darai_per_iskra)} DARAI/Искра`
       );
 
       res.json({ ok: true });
@@ -812,10 +819,17 @@ app.use("/api", (req, res, next) => {
 import multer from "multer";
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
+// Rate limit: 10 transcriptions per minute per user (protects Groq quota)
+const transcribeRateLimit = rateLimit({ windowMs: 60000, max: 10, keyFn: userOrIpKey });
+
+app.post("/api/transcribe", requireTelegramAuth, transcribeRateLimit, upload.single("audio"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "audio file required" });
-    console.log("[transcribe] file:", req.file.originalname, "size:", req.file.size, "mime:", req.file.mimetype);
+    // multer fileSize limit is 10MB but extra sanity check
+    if (req.file.size > 10 * 1024 * 1024) {
+      return res.status(413).json({ error: "Аудио слишком большое" });
+    }
+    console.log("[transcribe] user:", req.tgUser.id, "file:", req.file.originalname, "size:", req.file.size, "mime:", req.file.mimetype);
     const filename = req.file.originalname || "voice.webm";
     const mimetype = req.file.mimetype || "audio/webm";
     const text = await transcribeAudio(req.file.buffer, filename, mimetype);
@@ -823,7 +837,7 @@ app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
     res.json({ text });
   } catch (err) {
     console.error("[api/transcribe]", err.message);
-    res.status(500).json({ error: "Transcription failed: " + err.message });
+    res.status(500).json({ error: "Не удалось распознать голос" });
   }
 });
 
@@ -1142,6 +1156,24 @@ app.post("/api/job/:id/rating", requireTelegramAuth, async (req, res) => {
   }
 });
 
+// Whitelist for safe redirects from /api/download. Only our own Supabase
+// Storage is allowed as a redirect target — defence-in-depth against any
+// attacker who somehow writes an external URL into jobs.image_url.
+const SUPABASE_HOST = (() => {
+  try { return new URL(process.env.SUPABASE_URL || "").host; } catch { return ""; }
+})();
+function isSafeImageUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    // Allow our Supabase project host, plus the canonical supabase.co storage domain
+    if (SUPABASE_HOST && u.host === SUPABASE_HOST) return true;
+    if (u.host.endsWith(".supabase.co") || u.host.endsWith(".supabase.in")) return true;
+    return false;
+  } catch { return false; }
+}
+
 // Download image as file (works in Telegram WebView)
 app.get("/api/download/:id", async (req, res) => {
   const job = await getJob(req.params.id);
@@ -1155,16 +1187,25 @@ app.get("/api/download/:id", async (req, res) => {
     }
   }
 
+  // Sanitise filename for Content-Disposition — only hex/alphanumeric allowed
+  // (jobId is already crypto.randomBytes hex, but be defensive against CRLF
+  // injection or path traversal in older job IDs).
+  const safeId = String(req.params.id).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+
   // If base64 in cache — serve directly
   if (job.imageBase64) {
     const buf = Buffer.from(job.imageBase64, "base64");
     res.setHeader("Content-Type", "image/png");
-    res.setHeader("Content-Disposition", `attachment; filename="yupself-${req.params.id}.png"`);
+    res.setHeader("Content-Disposition", `attachment; filename="yupself-${safeId || "image"}.png"`);
     return res.send(buf);
   }
 
-  // If image_url (from Supabase Storage) — redirect
+  // If image_url (from Supabase Storage) — redirect, but only to a trusted host
   if (job.imageUrl) {
+    if (!isSafeImageUrl(job.imageUrl)) {
+      console.warn(`[download] refused redirect to untrusted URL: ${job.imageUrl.slice(0, 100)}`);
+      return res.status(404).send("Not found");
+    }
     return res.redirect(job.imageUrl);
   }
 
@@ -1236,10 +1277,17 @@ app.post("/api/face/save", upload.single("face"), requireTelegramAuth, async (re
     if (req.file.size > 1_500_000) {
       return res.status(413).json({ error: "Фото слишком большое (макс. 1.5MB)" });
     }
+    // Sanitize display name (prevent oversized blob tucked into `name` field)
+    const safeName = typeof name === "string" && name.length <= 120
+      ? name
+      : (typeof name === "string" ? name.slice(0, 120) : "Моё лицо");
     const b64 = req.file.buffer.toString("base64");
-    const face = await saveFace(req.tgUser.id, name || "Моё лицо", b64);
+    const face = await saveFace(req.tgUser.id, safeName || "Моё лицо", b64);
     res.json({ id: face.id, name: face.name });
   } catch (err) {
+    if (err?.code === "FACE_LIMIT") {
+      return res.status(429).json({ error: err.message });
+    }
     console.error("[face/save]", err.message);
     res.status(500).json({ error: "Не удалось сохранить фото" });
   }

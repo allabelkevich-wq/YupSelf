@@ -12,7 +12,7 @@ async function geocode(place) {
   try {
     const data = await nominatimSchedule(async () => {
       const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(place)}&format=json&limit=1&accept-language=ru`;
-      const res = await fetch(url, { headers: { "User-Agent": "YupSelf-AstroGen/1.0 (alla@yupsoul.com)" } });
+      const res = await fetch(url, { headers: { "User-Agent": "YupSelf-AstroGen/1.0 (+https://yupself-bot.onrender.com)" } });
       if (!res.ok) return null;
       return res.json();
     });
