@@ -912,8 +912,43 @@ app.use("/api", (req, res, next) => {
 });
 
 // ── Web API: voice transcription ────────────────────────────────────
-import multer from "multer";
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+import multer, { MulterError } from "multer";
+// Per-file limit raised 10 → 15 MB. Phone cameras routinely produce 12-18 MB
+// JPEGs; earlier 10 MB cap was tripping real users whose client-side
+// compressImage fallback had returned the original bytes (see fix in
+// bot/public/index.html compressImage).
+const UPLOAD_FILE_SIZE = 15 * 1024 * 1024;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: UPLOAD_FILE_SIZE,
+    files: 6, // 5 refs + 1 face
+  },
+});
+
+/**
+ * Friendly JSON translation of MulterError. Without this, Express 5 renders
+ * the full stack trace as HTML (~500 bytes) with status 400 — opaque to users.
+ * Placed as an error-middleware AFTER routes (see bottom of file).
+ */
+function multerErrorHandler(err, req, res, next) {
+  if (err instanceof MulterError) {
+    console.warn(`[multer] ${err.code} on ${req.method} ${req.path}: ${err.message} (field=${err.field || "—"})`);
+    sentryCapture(err, { tag: "multer", code: err.code, path: req.path, field: err.field });
+    const map = {
+      LIMIT_FILE_SIZE: { status: 413, msg: "Фото слишком большое. Максимум 15 МБ — попробуй сжать или выбрать другое." },
+      LIMIT_FILE_COUNT: { status: 413, msg: "Слишком много файлов. Максимум 5 референсов." },
+      LIMIT_UNEXPECTED_FILE: { status: 400, msg: "Неожиданное поле файла." },
+      LIMIT_PART_COUNT: { status: 413, msg: "Слишком сложная форма." },
+      LIMIT_FIELD_KEY: { status: 400, msg: "Слишком длинное имя поля." },
+      LIMIT_FIELD_VALUE: { status: 413, msg: "Слишком длинное значение поля." },
+      LIMIT_FIELD_COUNT: { status: 413, msg: "Слишком много полей." },
+    };
+    const m = map[err.code] || { status: 400, msg: "Не удалось обработать загрузку." };
+    return res.status(m.status).json({ error: m.msg, code: err.code });
+  }
+  next(err);
+}
 
 // Rate limit: 10 transcriptions per minute per user (protects Groq quota)
 const transcribeRateLimit = rateLimit({ windowMs: 60000, max: 10, keyFn: userOrIpKey });
@@ -1723,6 +1758,11 @@ app.post("/api/edit", requireTelegramAuth, genRateLimit, upload.array("images", 
     res.status(500).json({ error: "Не удалось запустить редактирование" });
   }
 });
+
+// Multer error middleware — MUST come after all routes that use upload.*
+// Without this, LIMIT_FILE_SIZE (and siblings) render as an HTML stack trace
+// via Express 5's default error handler, which users see as an opaque 400.
+app.use(multerErrorHandler);
 
 async function setupBotMenu() {
   try {

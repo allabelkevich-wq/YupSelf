@@ -948,12 +948,21 @@ window.addEventListener("unhandledrejection", function(e) {
     let imgData = null;
     let refFiles = []; // File objects for reference images
 
+    // Server accepts up to 15 MB per file. We reject anything bigger at the
+    // upload step so the user sees a clear message instead of a silent 400.
+    const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+
     // ── Reference Upload ─────────────────────────────────
     $("#refZone").addEventListener("click", () => $("#refInput").click());
     $("#refInput").addEventListener("change", (e) => {
         const files = Array.from(e.target.files);
         if (!files.length) return;
-        refFiles = refFiles.concat(files).slice(0, 5); // max 5
+        const tooBig = files.filter(f => f.size > MAX_UPLOAD_BYTES);
+        const ok = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+        if (tooBig.length) {
+            alert(`Слишком большие файлы (${tooBig.map(f=>f.name).join(", ")}). Максимум 15 МБ.`);
+        }
+        refFiles = refFiles.concat(ok).slice(0, 5); // max 5
         renderRefPreviews();
     });
     $("#refClear").addEventListener("click", (e) => {
@@ -963,28 +972,40 @@ window.addEventListener("unhandledrejection", function(e) {
     });
 
     // Compress image to max 1024x1024 JPEG (Gemini works best with this).
-    // Returns the original file on error/timeout rather than hanging the UI.
+    //
+    // Failure strategy (principled, not “return original blindly”):
+    //   - If we successfully decoded + drew the image: return the compressed Blob.
+    //   - If the browser choked (decode error, timeout, canvas failure):
+    //       - Return the original iff it is already small enough to upload (≤ 6 MB).
+    //       - Otherwise throw — the caller should surface a real error instead
+    //         of silently uploading a 20 MB file that the server will 413.
     async function compressImage(file, maxSize = 1024) {
-        return new Promise((resolve) => {
+        // Fast path: already small and likely a photo — skip decode if we can't help.
+        const SAFE_PASSTHROUGH_BYTES = 6 * 1024 * 1024;
+        return new Promise((resolve, reject) => {
             const img = new Image();
             const url = URL.createObjectURL(file);
             let done = false;
-            const finish = (result) => {
+            const fail = (reason) => {
                 if (done) return;
                 done = true;
                 try { URL.revokeObjectURL(url); } catch {}
-                resolve(result || file);
+                if (file.size <= SAFE_PASSTHROUGH_BYTES) {
+                    console.warn("[compressImage]", reason, "— falling back to original (small enough)");
+                    resolve(file);
+                } else {
+                    console.warn("[compressImage]", reason, "— file too big to pass through");
+                    reject(new Error(`Не удалось обработать фото (${(file.size/1024/1024).toFixed(1)} МБ). Попробуй другое или сожми вручную.`));
+                }
             };
-            // Safety net: never hang longer than 15s on a broken image
-            const timer = setTimeout(() => {
-                console.warn("[compressImage] timeout, using original");
-                finish(null);
-            }, 15000);
-            img.onerror = () => {
-                clearTimeout(timer);
-                console.warn("[compressImage] load error, using original");
-                finish(null);
+            const succeed = (blob) => {
+                if (done) return;
+                done = true;
+                try { URL.revokeObjectURL(url); } catch {}
+                resolve(new File([blob], file.name, { type: "image/jpeg" }));
             };
+            const timer = setTimeout(() => fail("timeout"), 15000);
+            img.onerror = () => { clearTimeout(timer); fail("decode error"); };
             img.onload = () => {
                 clearTimeout(timer);
                 try {
@@ -999,13 +1020,13 @@ window.addEventListener("unhandledrejection", function(e) {
                     canvas.height = h;
                     canvas.getContext("2d").drawImage(img, 0, 0, w, h);
                     canvas.toBlob(
-                        blob => finish(blob ? new File([blob], file.name, { type: "image/jpeg" }) : null),
+                        blob => blob ? succeed(blob) : fail("canvas.toBlob returned null"),
                         "image/jpeg",
                         0.85,
                     );
                 } catch (e) {
                     console.warn("[compressImage] canvas error:", e?.message || e);
-                    finish(null);
+                    fail("canvas exception");
                 }
             };
             img.src = url;
@@ -1106,25 +1127,55 @@ window.addEventListener("unhandledrejection", function(e) {
                 if (activeFaceId) form.append("faceId", String(activeFaceId));
                 const tgUser = tg?.initDataUnsafe?.user;
                 if (tgUser) form.append("telegramId", String(tgUser.id));
-                for (const f of refFiles) {
-                    const compressed = await compressImage(f);
-                    form.append("images", compressed);
+                // Compress each reference; compressImage throws on files too big
+                // to pass through, and we surface that to the user directly
+                // rather than uploading a broken 20MB file to the server.
+                try {
+                    for (const f of refFiles) {
+                        const compressed = await compressImage(f);
+                        form.append("images", compressed);
+                    }
+                } catch (compressErr) {
+                    throw new Error(compressErr.message || "Не удалось обработать фото");
                 }
                 // Save face if checkbox on and no face saved yet
                 await maybeSaveFace();
-                // Send with retry (mobile networks can timeout on large uploads)
+                // Send with retry, but ONLY for transient errors (network, 5xx).
+                // 4xx means the server already rejected the request on grounds
+                // that retrying won't fix (too-big, bad-data, no-Iskry).
                 let editJobId = null;
+                let lastErr = null;
                 for (let attempt = 0; attempt < 3 && !editJobId; attempt++) {
                     if (attempt > 0) { console.log("[edit] retry", attempt + 1); await new Promise(r => setTimeout(r, 2000)); }
                     try {
                         const editRes = await apiFetch(`${API}/api/edit`, { method: "POST", body: form });
-                        if (editRes.status === 402) throw new Error("Искры закончились. Пополни баланс в Кабинете.");
-                        if (!editRes.ok) { console.warn("[edit] HTTP", editRes.status); continue; }
-                        const editData = await editRes.json();
-                        if (editData.jobId) editJobId = editData.jobId;
-                    } catch (e) { console.warn("[edit] fetch error:", e.name, e.message); }
+                        if (editRes.ok) {
+                            const editData = await editRes.json();
+                            if (editData.jobId) { editJobId = editData.jobId; break; }
+                            lastErr = "Сервер не вернул jobId";
+                            continue;
+                        }
+                        // 4xx — don't retry, read the body for a message
+                        if (editRes.status >= 400 && editRes.status < 500) {
+                            let msg;
+                            try { msg = (await editRes.json()).error; } catch { msg = null; }
+                            if (editRes.status === 402) throw new Error("Искры закончились. Пополни баланс в Кабинете.");
+                            throw new Error(msg || `Ошибка ${editRes.status}`);
+                        }
+                        // 5xx or network weirdness — retry
+                        lastErr = "Сервер: " + editRes.status;
+                        console.warn("[edit] HTTP", editRes.status);
+                    } catch (e) {
+                        // Real network errors are TypeError / AbortError — keep retrying.
+                        // Our own throws carry a user-facing message — propagate immediately.
+                        if (e.message && (e.message.includes("Искры") || e.message.includes("Ошибка ") || e.message.includes("слишком"))) {
+                            throw e;
+                        }
+                        lastErr = e.message || e.name;
+                        console.warn("[edit] fetch error:", e.name, e.message);
+                    }
                 }
-                if (!editJobId) throw new Error("Не удалось отправить изображение. Проверь соединение.");
+                if (!editJobId) throw new Error(lastErr || "Не удалось отправить изображение. Проверь соединение.");
                 currentJobId = editJobId;
                 data = await pollJob(editJobId);
             } else {
@@ -1887,11 +1938,20 @@ window.addEventListener("unhandledrejection", function(e) {
             try {
                 const compressed = await compressImage(astroFaceFile, 512);
                 const reader = new FileReader();
-                faceBase64 = await new Promise((resolve) => {
+                faceBase64 = await new Promise((resolve, reject) => {
                     reader.onload = () => resolve(reader.result.split(",")[1]); // strip data:... prefix
+                    reader.onerror = () => reject(new Error("Не удалось прочитать фото"));
                     reader.readAsDataURL(compressed);
                 });
-            } catch (e) { console.error("Face compress:", e); }
+            } catch (e) {
+                console.error("Face compress:", e);
+                // Surface the specific failure — better than a generic "no face" 400.
+                alert(e?.message || "Не удалось обработать фото. Попробуй другое.");
+                btn.disabled = false;
+                btn.textContent = "Создать портрет по звёздам";
+                $("#astroLoading").classList.remove("visible");
+                return;
+            }
         }
 
         try {
