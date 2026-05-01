@@ -1336,27 +1336,74 @@ window.addEventListener("unhandledrejection", function(e) {
     });
     let currentJobId = null;
     let currentAstroJobId = null;
-    $("#dlBtn").addEventListener("click", () => {
-        const url = currentJobId ? `${API}/api/download/${currentJobId}` : null;
-        if (url) {
-            // Telegram WebView: use tg.openLink (window.open is blocked)
-            if (tg?.openLink) { tg.openLink(url); }
-            else { window.location.href = url; }
-        } else if (imgData) {
-            // Fallback for base64 — try blob download
+
+    // ── Universal download flow ─────────────────────────────
+    // Why this exists: tg.openLink() opens URLs in the system browser
+    // (Safari on iOS, Chrome on Android), which does NOT carry our
+    // X-Telegram-Init-Data header. So /api/download owner-check returns
+    // 403 — the bug Alla hit on 2026-05-01. The fix: download in-page
+    // via Blob, never punt to the system browser.
+    //
+    // Fallback chain:
+    //   1) base64 in memory          → atob → Blob → <a download> (always works)
+    //   2) imageUrl (Supabase)       → fetch → Blob → <a download>
+    //   3) /api/download with initData in query string (last resort,
+    //      survives even if the page lost the base64/URL after refresh)
+    function triggerBlobDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+
+    async function downloadImageSmart({ base64, imageUrl, jobId, filename }) {
+        const fname = filename || `yupself-${Date.now()}.png`;
+
+        // 1) base64 — always works, no network
+        if (base64) {
             try {
-                const byteChars = atob(imgData);
-                const byteArr = new Uint8Array(byteChars.length);
-                for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-                const blob = new Blob([byteArr], { type: "image/png" });
-                const blobUrl = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = blobUrl;
-                a.download = `yupself-${Date.now()}.png`;
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-            } catch { if (tg?.openLink) tg.openLink(`${API}/api/download/${currentJobId}`); }
+                const byteChars = atob(base64);
+                const arr = new Uint8Array(byteChars.length);
+                for (let i = 0; i < byteChars.length; i++) arr[i] = byteChars.charCodeAt(i);
+                triggerBlobDownload(new Blob([arr], { type: "image/png" }), fname);
+                return true;
+            } catch (e) { console.warn("[download] base64 path failed:", e?.message); }
         }
+
+        // 2) imageUrl (Supabase Storage) — fetch then save as blob
+        if (imageUrl && /^https?:\/\//.test(imageUrl)) {
+            try {
+                const r = await fetch(imageUrl, { mode: "cors" });
+                if (r.ok) {
+                    triggerBlobDownload(await r.blob(), fname);
+                    return true;
+                }
+                console.warn("[download] imageUrl fetch HTTP", r.status);
+            } catch (e) { console.warn("[download] imageUrl fetch failed:", e?.message); }
+        }
+
+        // 3) /api/download with initData in query string — server's owner-check
+        //    accepts ?initData=... fallback when the WebView header is absent.
+        if (jobId && tg?.initData) {
+            const url = `${API}/api/download/${encodeURIComponent(jobId)}?initData=${encodeURIComponent(tg.initData)}`;
+            if (tg?.openLink) { tg.openLink(url); return true; }
+            window.location.href = url;
+            return true;
+        }
+
+        alert("Не удалось скачать. Попробуй сделать долгое нажатие на картинку и выбрать «Сохранить».");
+        return false;
+    }
+
+    $("#dlBtn").addEventListener("click", () => {
+        const src = $("#resultImg")?.src || "";
+        const imageUrl = src.startsWith("http") ? src : null;
+        downloadImageSmart({ base64: imgData, imageUrl, jobId: currentJobId });
     });
 
     // ── Yupik mascot ─────────────────────────────────────
@@ -1539,11 +1586,24 @@ window.addEventListener("unhandledrejection", function(e) {
                 for (const gen of data.history) {
                     const div = document.createElement("div");
                     div.className = "cab-history-item";
+                    div.title = gen.prompt || ""; // full prompt on hover
+
                     if (gen.image_url) {
                         const img = document.createElement("img");
                         img.src = gen.image_url;
                         img.alt = "";
                         img.loading = "lazy";
+                        // If the image_url is dead (storage purge, network),
+                        // swap to a clear "missing" badge instead of a broken icon.
+                        img.onerror = () => {
+                            img.remove();
+                            const ph = document.createElement("div");
+                            ph.style.cssText = "padding:12px; font-size:11px; color:var(--text-secondary); text-align:center;";
+                            ph.textContent = "🚫 Изображение недоступно";
+                            div.insertBefore(ph, div.firstChild);
+                        };
+                        div.appendChild(img);
+
                         const fav = document.createElement("span");
                         fav.className = "fav" + (gen.is_favorite ? " on" : "");
                         fav.dataset.id = String(gen.id);
@@ -1556,15 +1616,40 @@ window.addEventListener("unhandledrejection", function(e) {
                                 fav.classList.toggle("on", d.isFavorite);
                             } catch {}
                         });
-                        div.addEventListener("click", () => openImgViewer(gen.image_url));
-                        div.appendChild(img);
                         div.appendChild(fav);
+                        div.addEventListener("click", () => openImgViewer(gen.image_url));
                     } else {
-                        const inner = document.createElement("div");
-                        inner.style.cssText = "padding:8px;font-size:10px;color:var(--text-secondary)";
-                        inner.textContent = (gen.prompt || "").slice(0, 40) + "...";
-                        div.appendChild(inner);
+                        // No URL — render a labelled placeholder with prompt + date,
+                        // not a 40-char silent string that the user can't act on.
+                        const ph = document.createElement("div");
+                        ph.style.cssText = "padding:10px; font-size:11px; color:var(--text-secondary); display:flex; flex-direction:column; gap:4px; height:100%; box-sizing:border-box;";
+                        const tag = document.createElement("div");
+                        tag.style.cssText = "font-size:10px; color:#999; text-transform:uppercase; letter-spacing:0.5px;";
+                        tag.textContent = "не сохранилось";
+                        const txt = document.createElement("div");
+                        txt.textContent = (gen.prompt || "—").slice(0, 80);
+                        ph.appendChild(tag);
+                        ph.appendChild(txt);
+                        div.appendChild(ph);
                     }
+
+                    // Date overlay — every item gets one (top-left corner)
+                    if (gen.created_at) {
+                        const date = new Date(gen.created_at);
+                        const now = Date.now();
+                        const diffH = (now - date.getTime()) / 36e5;
+                        let label;
+                        if (diffH < 1) label = "только что";
+                        else if (diffH < 24) label = `${Math.floor(diffH)} ч назад`;
+                        else if (diffH < 24 * 7) label = `${Math.floor(diffH / 24)} дн назад`;
+                        else label = date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+                        const dateBadge = document.createElement("span");
+                        dateBadge.style.cssText = "position:absolute; top:6px; left:6px; padding:2px 6px; border-radius:6px; background:rgba(0,0,0,0.6); color:#fff; font-size:10px; font-weight:600; pointer-events:none;";
+                        dateBadge.textContent = label;
+                        div.style.position = "relative";
+                        div.appendChild(dateBadge);
+                    }
+
                     hist.appendChild(div);
                 }
             } else {
@@ -1583,22 +1668,11 @@ window.addEventListener("unhandledrejection", function(e) {
         modal.style.display = "flex";
 
         const dlBtn = $("#imgViewerDl");
-        dlBtn.onclick = async () => {
-            try {
-                const resp = await fetch(url);
-                const blob = await resp.blob();
-                const a = document.createElement("a");
-                a.href = URL.createObjectURL(blob);
-                a.download = `yupself-${Date.now()}.png`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(a.href);
-            } catch {
-                // Fallback: open in new tab
-                if (tg?.openLink) tg.openLink(url);
-                else window.open(url, "_blank");
-            }
+        dlBtn.onclick = () => {
+            // History items always carry the image as a Supabase Storage URL
+            // (image_url column). Reuse the universal flow so we get a real
+            // file download, not a system-browser open without auth.
+            downloadImageSmart({ imageUrl: url, filename: `yupself-${Date.now()}.png` });
         };
     }
 
@@ -2046,19 +2120,11 @@ window.addEventListener("unhandledrejection", function(e) {
     // Astro result buttons
     // prompt toggle removed — users see only image + analysis
     $("#astroDlBtn").addEventListener("click", () => {
-        // Use /api/download endpoint — works after server restarts (reads from Supabase)
-        const dlUrl = currentAstroJobId ? `${API}/api/download/${currentAstroJobId}` : null;
-        if (dlUrl) {
-            if (tg?.openLink) tg.openLink(dlUrl);
-            else window.location.href = dlUrl;
-        } else {
-            // Fallback: download from img src
-            const src = $("#astroResultImg").src;
-            if (src.startsWith("http")) {
-                if (tg?.openLink) tg.openLink(src);
-                else window.location.href = src;
-            }
-        }
+        const src = $("#astroResultImg")?.src || "";
+        // <img src="data:image/png;base64,XXX"> → strip prefix
+        const base64 = src.startsWith("data:image") ? src.split(",")[1] : null;
+        const imageUrl = src.startsWith("http") ? src : null;
+        downloadImageSmart({ base64, imageUrl, jobId: currentAstroJobId, filename: `yupself-astro-${Date.now()}.png` });
     });
     $("#astroRetryBtn").addEventListener("click", () => $("#astroGenBtn").click());
     $("#astroShareBtn").addEventListener("click", () => {
