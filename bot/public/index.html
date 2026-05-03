@@ -333,92 +333,6 @@
         .astro-preset:active { transform: scale(0.97); }
         .astro-preset.selected { background: linear-gradient(135deg, var(--accent-1), var(--accent-2)); color: white; border-color: transparent; }
 
-        /* ── Marketing scenario chips ─────────────────────── */
-        .scenario-block {
-            margin: -4px 0 14px 0;
-        }
-        .scenario-head {
-            display: flex; justify-content: space-between; align-items: baseline;
-            margin-bottom: 8px; padding: 0 2px;
-        }
-        .scenario-title {
-            font-size: 11px;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            font-weight: 600;
-        }
-        .scenario-active {
-            font-size: 11px;
-            color: var(--accent-1);
-            font-weight: 600;
-            opacity: 0.85;
-        }
-        .scenario-chips {
-            display: flex;
-            gap: 8px;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: none;
-            padding: 4px 2px 8px;
-            scroll-snap-type: x proximity;
-        }
-        .scenario-chips::-webkit-scrollbar { display: none; }
-        .scenario-chip {
-            flex: 0 0 auto;
-            width: 96px;
-            border-radius: 14px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1.5px solid var(--border);
-            cursor: pointer;
-            overflow: hidden;
-            transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
-            scroll-snap-align: start;
-            display: flex; flex-direction: column;
-        }
-        .scenario-chip:hover { border-color: rgba(245,158,11,0.5); transform: translateY(-1px); }
-        .scenario-chip:active { transform: scale(0.97); }
-        .scenario-chip.selected {
-            border-color: var(--accent-1);
-            background: rgba(245, 158, 11, 0.08);
-            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
-        }
-        .scenario-chip-thumb {
-            width: 100%;
-            aspect-ratio: 1 / 1;
-            object-fit: cover;
-            display: block;
-            background: rgba(0,0,0,0.2);
-        }
-        .scenario-chip-label {
-            padding: 6px 8px 8px;
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-primary);
-            line-height: 1.2;
-            text-align: center;
-            font-family: 'Manrope', sans-serif;
-        }
-        .scenario-chip-aspect {
-            font-size: 9px;
-            color: var(--text-secondary);
-            font-weight: 500;
-            margin-top: 2px;
-        }
-        .scenario-chip-skeleton {
-            flex: 0 0 auto;
-            width: 96px;
-            height: 124px;
-            border-radius: 14px;
-            background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.08), rgba(255,255,255,0.04));
-            background-size: 200% 100%;
-            animation: skel 1.4s ease-in-out infinite;
-        }
-        @keyframes skel {
-            0% { background-position: 200% 0; }
-            100% { background-position: -200% 0; }
-        }
-
         /* ── Bottom Navigation ─────────────────────────────── */
         .bottom-nav {
             position: fixed; bottom: 0; left: 0; right: 0;
@@ -578,25 +492,6 @@
     <!-- ═══ TAB: ГЕНЕРАЦИЯ ═══ -->
     <div class="tab-content active" id="tabGenerate">
     <div class="glass">
-        <!-- Marketing scenario chips — quick-pick templates that lock
-             aspect ratio + wrap user's prompt in a composition-aware
-             template. The chip carrying class .selected is the active
-             scenario; clicking the same chip again deselects it
-             (back to "free" mode). -->
-        <div class="scenario-block" id="scenarioBlock">
-            <div class="scenario-head">
-                <span class="scenario-title">Сценарии</span>
-                <span class="scenario-active" id="scenarioActiveLabel">Свободный ввод</span>
-            </div>
-            <div class="scenario-chips" id="scenarioChips">
-                <!-- filled by loadScenarios() -->
-                <div class="scenario-chip-skeleton"></div>
-                <div class="scenario-chip-skeleton"></div>
-                <div class="scenario-chip-skeleton"></div>
-                <div class="scenario-chip-skeleton"></div>
-            </div>
-        </div>
-
         <div class="input-wrap">
             <textarea id="prompt" placeholder="Опиши, что хочешь увидеть..."></textarea>
             <button class="voice-btn" id="voiceBtn" title="Голосовой ввод">
@@ -1050,83 +945,6 @@ window.addEventListener("unhandledrejection", function(e) {
     }
     loadBalance(); // load real balance from server on startup
 
-    // ── Marketing scenarios ─────────────────────────────
-    // currentScenario === null means "free" — user types any prompt with no
-    // template wrapping. Selecting a chip locks aspectRatio and rewrites
-    // the prompt placeholder to guide what to type.
-    let currentScenario = null;
-    const FREE_PLACEHOLDER = "Опиши, что хочешь увидеть...";
-    let _scenarioCache = null;
-
-    async function loadScenarios() {
-        try {
-            const res = await apiFetch(`${API}/api/scenarios`);
-            if (!res.ok) throw new Error("HTTP " + res.status);
-            const { scenarios } = await res.json();
-            _scenarioCache = scenarios || [];
-            renderScenarioChips();
-        } catch (e) {
-            console.warn("[scenarios] load failed:", e?.message);
-            // Hide the block on failure rather than leaving skeletons forever
-            const block = $("#scenarioBlock");
-            if (block) block.style.display = "none";
-        }
-    }
-
-    function renderScenarioChips() {
-        const box = $("#scenarioChips");
-        if (!box || !_scenarioCache) return;
-        box.textContent = "";
-        for (const s of _scenarioCache) {
-            const chip = document.createElement("div");
-            chip.className = "scenario-chip";
-            chip.dataset.id = s.id;
-            chip.title = s.description || s.label;
-
-            const img = document.createElement("img");
-            img.className = "scenario-chip-thumb";
-            img.loading = "lazy";
-            img.alt = s.label;
-            img.src = s.previewUrl;
-            // Soft fallback if the preview ever 404s
-            img.onerror = () => { img.style.background = "linear-gradient(135deg,#2a2a42,#1a1a2e)"; img.removeAttribute("src"); };
-            chip.appendChild(img);
-
-            const labelWrap = document.createElement("div");
-            labelWrap.className = "scenario-chip-label";
-            labelWrap.textContent = s.label;
-            const aspect = document.createElement("div");
-            aspect.className = "scenario-chip-aspect";
-            aspect.textContent = s.aspectRatio;
-            labelWrap.appendChild(aspect);
-            chip.appendChild(labelWrap);
-
-            chip.addEventListener("click", () => selectScenario(currentScenario === s.id ? null : s.id));
-            box.appendChild(chip);
-        }
-    }
-
-    function selectScenario(id) {
-        currentScenario = id;
-        const all = document.querySelectorAll(".scenario-chip");
-        all.forEach(c => c.classList.toggle("selected", c.dataset.id === id));
-        const s = id ? (_scenarioCache || []).find(x => x.id === id) : null;
-        $("#scenarioActiveLabel").textContent = s ? s.label : "Свободный ввод";
-        $("#prompt").placeholder = s?.placeholder || FREE_PLACEHOLDER;
-        // If scenario has a fixed aspect, sync the visible selector so the user
-        // sees what they'll get. The server enforces it regardless.
-        if (s?.aspectRatio) {
-            const aspectSel = document.querySelector('select[name="aspect"], #aspect');
-            if (aspectSel) {
-                for (const opt of aspectSel.options) {
-                    if (opt.value === s.aspectRatio) { aspectSel.value = s.aspectRatio; break; }
-                }
-            }
-        }
-    }
-
-    loadScenarios();
-
     let imgData = null;
     let refFiles = []; // File objects for reference images
 
@@ -1367,7 +1185,6 @@ window.addEventListener("unhandledrejection", function(e) {
                     aspectRatio: sel("aspect"),
                     imageSize: sel("size"),
                     quality: sel("quality") || "pro",
-                    scenario: currentScenario,
                     telegramId: tg?.initDataUnsafe?.user?.id || null,
                 });
                 let jobId = null;

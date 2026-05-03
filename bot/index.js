@@ -13,7 +13,6 @@ import { generateAstroImage } from "./astro-worker.js";
 import { nominatimSchedule } from "./geocode.js";
 import { getStarsPackages, createStarsInvoice, parseStarsPayload } from "./telegram-stars.js";
 import { applyWatermark } from "./watermark.js";
-import { applyScenario, listScenarios } from "./scenarios.js";
 
 // ── Config ──────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -1170,23 +1169,13 @@ const genRateLimit = rateLimit({ windowMs: 60000, max: 10, keyFn: userOrIpKey })
 
 app.post("/api/generate", requireTelegramAuth, genRateLimit, async (req, res) => {
   try {
-    const { prompt, style, aspectRatio, imageSize, quality, scenario } = req.body;
+    const { prompt, style, aspectRatio, imageSize, quality } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required" });
     if (typeof prompt !== "string" || prompt.length > 5000) {
       return res.status(400).json({ error: "prompt too long" });
     }
-    if (scenario != null && typeof scenario !== "string") {
-      return res.status(400).json({ error: "scenario must be a string id" });
-    }
 
     const telegramId = Number(req.tgUser.id);
-
-    // Apply marketing scenario template (or no-op for "free" / unknown).
-    // The scenario locks aspectRatio + wraps the user's text into a
-    // composition-aware prompt — e.g. "16:9 YouTube thumbnail. Topic: <prompt>".
-    const applied = applyScenario(scenario, prompt, { aspectRatio });
-    const finalPrompt = applied.prompt;
-    const finalAspect = applied.aspectRatio;
 
     // Spend 100 Iskry per generation
     const spend = await spendTokens(telegramId, 100, "Генерация изображения");
@@ -1195,11 +1184,11 @@ app.post("/api/generate", requireTelegramAuth, genRateLimit, async (req, res) =>
     }
 
     const jobId = crypto.randomBytes(12).toString("hex");
-    await setJob(jobId, { status: "processing", prompt: finalPrompt, ownerId: telegramId });
+    await setJob(jobId, { status: "processing", prompt, ownerId: telegramId });
 
-    console.log(`[job ${jobId}] generating (${quality || "pro"}, scenario=${applied.scenario || "free"}, ${finalAspect}): "${finalPrompt.slice(0, 80)}..."`);
-    const genPromise = generateImage(finalPrompt, {
-      aspectRatio: finalAspect,
+    console.log(`[job ${jobId}] generating (${quality || "pro"}): "${prompt.slice(0, 80)}..."`);
+    const genPromise = generateImage(prompt, {
+      aspectRatio: aspectRatio || "1:1",
       imageSize: imageSize || "1K",
       quality: quality || "pro",
     });
@@ -1220,11 +1209,9 @@ app.post("/api/generate", requireTelegramAuth, genRateLimit, async (req, res) =>
           imageUrl: result.imageUrl || null,
         });
         try {
-          // History records the user's original prompt (so it reads naturally
-          // in the cabinet) but the actual aspect we generated at.
           await saveGeneration(telegramId, {
             prompt,
-            aspectRatio: finalAspect,
+            aspectRatio: aspectRatio || "1:1",
             imageSize: imageSize || "1K",
             imageUrl: (await getJob(jobId))?.imageUrl || null,
           });
@@ -1478,11 +1465,6 @@ app.delete("/api/face/:id", requireTelegramAuth, async (req, res) => {
 });
 
 // ── DaraiPay API ────────────────────────────────────────────────────
-// Public — list of marketing-scenario presets (chip strip in Mini App)
-app.get("/api/scenarios", (_req, res) => {
-  res.json({ scenarios: listScenarios() });
-});
-
 app.get("/api/packages", (_req, res) => {
   res.json({ packages: PACKAGES, merchantAccount: MERCHANT_ACCOUNT });
 });
