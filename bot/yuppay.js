@@ -209,3 +209,50 @@ export function verifyWebhookSignature(rawBody, signature) {
     return false;
   }
 }
+
+/**
+ * Diagnostic helper — try every plausible signature encoding and report
+ * which (if any) matches. Used by the webhook handler on 401 to figure
+ * out whether the secret is wrong or the encoding differs from our assumption.
+ *
+ * Returns an object describing what was tried — safe to log: it contains
+ * hashes (public artefacts of the body) but never the secret value itself.
+ */
+export function diagnoseWebhookSignature(rawBody, signature) {
+  const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : String(rawBody);
+  const provided = (signature || "").replace(/^(sha256|sha512|hmac)\s*[=:]\s*/i, "").trim();
+  const variants = {};
+
+  function hmac(algo, encoding) {
+    if (!YUPPAY_WEBHOOK_SECRET) return null;
+    try {
+      return crypto.createHmac(algo, YUPPAY_WEBHOOK_SECRET).update(bodyStr).digest(encoding);
+    } catch { return null; }
+  }
+
+  variants["sha256_hex"]    = hmac("sha256", "hex");
+  variants["sha256_base64"] = hmac("sha256", "base64");
+  variants["sha512_hex"]    = hmac("sha512", "hex");
+  variants["sha512_base64"] = hmac("sha512", "base64");
+
+  let match = null;
+  for (const [name, val] of Object.entries(variants)) {
+    if (val && (val === provided || val === provided.replace(/=+$/, ""))) {
+      match = name;
+      break;
+    }
+  }
+
+  return {
+    secretConfigured: !!YUPPAY_WEBHOOK_SECRET,
+    secretLength: YUPPAY_WEBHOOK_SECRET?.length || 0,
+    bodyLength: bodyStr.length,
+    bodySha256Prefix: crypto.createHash("sha256").update(bodyStr).digest("hex").slice(0, 16),
+    providedSignaturePrefix: provided.slice(0, 24),
+    providedSignatureLength: provided.length,
+    computedPrefixes: Object.fromEntries(
+      Object.entries(variants).map(([k, v]) => [k, v?.slice(0, 24) || null])
+    ),
+    matchedVariant: match,
+  };
+}

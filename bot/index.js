@@ -7,7 +7,7 @@ import { enhancePrompt, translatePrompt, generateImage, editImage } from "./open
 import { transcribeAudio } from "./groq.js";
 import supabase, { getOrCreateUser, getBalance, spendTokens, addTokens, refundTokens, saveGeneration, getGenerations, getUserStats, toggleFavorite, uploadImage } from "./db.js";
 import { createPayment, checkPayment, getPendingPayments, PACKAGES, MERCHANT_ACCOUNT } from "./darai-pay.js";
-import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, getYupPayPackages, getCurrentRate } from "./yuppay.js";
+import { createInvoice as yuppayCreateInvoice, verifyWebhookSignature as yuppayVerifySig, diagnoseWebhookSignature as yuppayDiagnoseSig, getYupPayPackages, getCurrentRate } from "./yuppay.js";
 import { saveFace, getSavedFaces, getFaceImage, deleteFace } from "./sessions.js";
 import { generateAstroImage } from "./astro-worker.js";
 import { nominatimSchedule } from "./geocode.js";
@@ -806,7 +806,30 @@ app.post("/api/webhooks/yuppay",
       const signature = req.get("x-yuppay-signature") || req.get("X-Yuppay-Signature") || "";
 
       if (!yuppayVerifySig(rawBody, signature)) {
-        console.warn("[yuppay/webhook] invalid signature");
+        // Diagnostic: figure out WHY the signature didn't match — wrong
+        // secret? wrong encoding? wrong algo? wrong body framing?
+        // The diagnostic returns only public hashes, never the secret itself.
+        const diag = yuppayDiagnoseSig(rawBody, signature);
+        // Collect interesting headers — some webhook providers include
+        // timestamp / version / id headers that signal the signing format.
+        const sigHeaders = {};
+        for (const [k, v] of Object.entries(req.headers || {})) {
+          if (/^x-yuppay|^x-signature|^x-webhook|^x-request-id|^x-timestamp/i.test(k)) {
+            sigHeaders[k] = String(v).slice(0, 120);
+          }
+        }
+        console.warn("[yuppay/webhook] invalid signature — diagnostic:", JSON.stringify({
+          ...diag,
+          sigHeaders,
+          contentType: req.get("content-type") || null,
+          userAgent: req.get("user-agent") || null,
+        }));
+        // Send to Sentry too so it surfaces in the alerts feed.
+        sentryCapture(new Error("YupPay webhook invalid signature"), {
+          tag: "yuppay/webhook",
+          ...diag,
+          sigHeaders,
+        });
         return res.status(401).json({ error: "Invalid signature" });
       }
 
